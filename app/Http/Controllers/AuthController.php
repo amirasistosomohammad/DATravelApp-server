@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\RateLimiter;
 use App\Models\IctAdmin;
 use App\Models\Personnel;
 use App\Models\Director;
+use App\Models\TimeLog;
 
 class AuthController extends Controller
 {
@@ -116,6 +117,26 @@ class AuthController extends Controller
         // Create token with 12-hour expiration (configured in sanctum.php)
         $token = $user->createToken('auth-token');
 
+        // Record time-in for personnel/director logins
+        if ($user instanceof Personnel || $user instanceof Director) {
+            $tz = config('app.timezone') ?: 'Asia/Manila';
+            $now = now($tz);
+            $logData = [
+                'log_date' => $now->toDateString(),
+                'time_in' => $now->format('H:i'),
+            ];
+
+            if ($user instanceof Personnel) {
+                $logData['personnel_id'] = $user->id;
+                $logData['director_id'] = null;
+            } else {
+                $logData['director_id'] = $user->id;
+                $logData['personnel_id'] = null;
+            }
+
+            TimeLog::create($logData);
+        }
+
         // Prepare user data for response
         $userData = [
             'id' => $user->id,
@@ -194,6 +215,27 @@ class AuthController extends Controller
     {
         $user = $request->user();
 
+        if ($user instanceof Personnel || $user instanceof Director) {
+            $tz = config('app.timezone') ?: 'Asia/Manila';
+            $now = now($tz);
+            $query = TimeLog::query()
+                ->whereNull('time_out')
+                ->orderByDesc('log_date')
+                ->orderByDesc('time_in');
+
+            if ($user instanceof Personnel) {
+                $query->where('personnel_id', $user->id);
+            } else {
+                $query->where('director_id', $user->id);
+            }
+
+            $openLog = $query->first();
+            if ($openLog) {
+                $openLog->time_out = $now->format('H:i');
+                $openLog->save();
+            }
+        }
+
         if ($user) {
             // Revoke current token
             $request->user()->currentAccessToken()->delete();
@@ -214,6 +256,27 @@ class AuthController extends Controller
     public function logoutAll(Request $request)
     {
         $user = $request->user();
+
+        if ($user instanceof Personnel || $user instanceof Director) {
+            $tz = config('app.timezone') ?: 'Asia/Manila';
+            $now = now($tz);
+            $query = TimeLog::query()
+                ->whereNull('time_out')
+                ->orderByDesc('log_date')
+                ->orderByDesc('time_in');
+
+            if ($user instanceof Personnel) {
+                $query->where('personnel_id', $user->id);
+            } else {
+                $query->where('director_id', $user->id);
+            }
+
+            $openLog = $query->first();
+            if ($openLog) {
+                $openLog->time_out = $now->format('H:i');
+                $openLog->save();
+            }
+        }
 
         if ($user) {
             // Revoke all tokens for this user

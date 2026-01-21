@@ -19,6 +19,7 @@ class DatabaseSeeder extends Seeder
             IctAdminSeeder::class,
             PersonnelSeeder::class,
             DirectorSeeder::class,
+            TimeLogSeeder::class,
         ]);
     }
 }

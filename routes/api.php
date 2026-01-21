@@ -3,6 +3,7 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\PersonnelManagementController;
 use App\Http\Controllers\DirectorManagementController;
+use App\Http\Controllers\TimeLoggingController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -30,4 +31,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/ict-admin/directors', [DirectorManagementController::class, 'store']);
     Route::put('/ict-admin/directors/{director}', [DirectorManagementController::class, 'update']);
     Route::delete('/ict-admin/directors/{director}', [DirectorManagementController::class, 'destroy']);
+
+    // ICT Admin - Time logging
+    Route::get('/ict-admin/time-logs', [TimeLoggingController::class, 'index']);
+    Route::post('/ict-admin/time-logs', [TimeLoggingController::class, 'store']);
+    Route::put('/ict-admin/time-logs/{timeLog}', [TimeLoggingController::class, 'update']);
+    Route::delete('/ict-admin/time-logs/{timeLog}', [TimeLoggingController::class, 'destroy']);
 });
