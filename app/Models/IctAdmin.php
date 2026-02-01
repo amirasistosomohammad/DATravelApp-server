@@ -14,7 +14,7 @@ class IctAdmin extends Authenticatable
     /**
      * The table associated with the model.
      *
-     * @var string    
+     * @var string     ASA               
      */
     protected $table = 'ict_admins';
 

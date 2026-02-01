@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\IctAdminSettingsController;
 use App\Http\Controllers\PersonnelManagementController;
 use App\Http\Controllers\DirectorManagementController;
 use App\Http\Controllers\TimeLoggingController;
@@ -9,6 +10,7 @@ use Illuminate\Support\Facades\Route;
 
 // Public routes
 Route::post('/login', [AuthController::class, 'login']);
+Route::get('/branding', [IctAdminSettingsController::class, 'getBrandingPublic']);
 
 // Public avatar serving (no auth required for images)
 Route::get('/personnel-avatar/{filename}', [PersonnelManagementController::class, 'getAvatar']);
@@ -37,4 +39,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/ict-admin/time-logs', [TimeLoggingController::class, 'store']);
     Route::put('/ict-admin/time-logs/{timeLog}', [TimeLoggingController::class, 'update']);
     Route::delete('/ict-admin/time-logs/{timeLog}', [TimeLoggingController::class, 'destroy']);
+
+    // ICT Admin - System settings (change password, branding)
+    Route::put('/ict-admin/change-password', [IctAdminSettingsController::class, 'changePassword']);
+    Route::get('/ict-admin/branding', [IctAdminSettingsController::class, 'getBranding']);
+    Route::post('/ict-admin/branding', [IctAdminSettingsController::class, 'updateBranding']);
 });
