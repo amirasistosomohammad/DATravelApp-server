@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\Personnel;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
 class PersonnelSeeder extends Seeder
@@ -16,7 +17,10 @@ class PersonnelSeeder extends Seeder
         // Clear existing to avoid unique constraint issues when reseeding
         // Comment this out if you don't want truncation in non-local envs.
         if (app()->environment('local')) {
-            \DB::table('personnel')->truncate();
+            // MySQL blocks TRUNCATE when FK constraints exist, even if empty.
+            DB::statement('SET FOREIGN_KEY_CHECKS=0');
+            DB::table('personnel')->truncate();
+            DB::statement('SET FOREIGN_KEY_CHECKS=1');
         }
 
         // Long names for testing responsiveness
