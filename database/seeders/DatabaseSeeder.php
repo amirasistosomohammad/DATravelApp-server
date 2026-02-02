@@ -14,12 +14,13 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // Seed ICT Admin and sample Personnel accounts
+        // Seed ICT Admin, Personnel, Directors, Time Logs, and Travel Orders
         $this->call([
             IctAdminSeeder::class,
             PersonnelSeeder::class,
             DirectorSeeder::class,
             TimeLogSeeder::class,
+            TravelOrderSeeder::class,
         ]);
     }
 }

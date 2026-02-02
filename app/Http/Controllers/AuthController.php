@@ -115,6 +115,7 @@ class AuthController extends Controller
         Auth::guard($guard)->logout();
 
         // Create token with 12-hour expiration (configured in sanctum.php)
+        /** @var \App\Models\IctAdmin|\App\Models\Personnel|\App\Models\Director $user */
         $token = $user->createToken('auth-token');
 
         // Record time-in for personnel/director logins
@@ -147,6 +148,17 @@ class AuthController extends Controller
             'position' => $user->position ?? null,
             'department' => $user->department ?? 'Department of Agriculture',
         ];
+
+        // Avatar URL: full URL from internet (e.g. seeded) or API path
+        if ($user instanceof Personnel && $user->avatar_path) {
+            $userData['avatar'] = str_starts_with($user->avatar_path, 'http')
+                ? $user->avatar_path
+                : url('/storage/' . ltrim($user->avatar_path, '/'));
+        } elseif ($user instanceof Director && $user->avatar_path) {
+            $userData['avatar'] = str_starts_with($user->avatar_path, 'http')
+                ? $user->avatar_path
+                : url('/storage/' . ltrim($user->avatar_path, '/'));
+        }
 
         return response()->json([
             'success' => true,
@@ -196,6 +208,17 @@ class AuthController extends Controller
             'position' => $user->position ?? null,
             'department' => $user->department ?? 'Department of Agriculture',
         ];
+
+        // Avatar URL: full URL from internet (e.g. seeded) or API path
+        if ($user instanceof Personnel && $user->avatar_path) {
+            $userData['avatar'] = str_starts_with($user->avatar_path, 'http')
+                ? $user->avatar_path
+                : url('/storage/' . ltrim($user->avatar_path, '/'));
+        } elseif ($user instanceof Director && $user->avatar_path) {
+            $userData['avatar'] = str_starts_with($user->avatar_path, 'http')
+                ? $user->avatar_path
+                : url('/storage/' . ltrim($user->avatar_path, '/'));
+        }
 
         return response()->json([
             'success' => true,

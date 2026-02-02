@@ -14,6 +14,9 @@ class DirectorSeeder extends Seeder
      */
     public function run(): void
     {
+        // Real people portrait URLs (randomuser.me)
+        $avatarBase = 'https://randomuser.me/api/portraits';
+
         $records = [
             [
                 'username' => 'director1',
@@ -27,6 +30,7 @@ class DirectorSeeder extends Seeder
                 'department' => 'Department of Agriculture',
                 'director_level' => 'Regional Director',
                 'is_active' => true,
+                'avatar_path' => "{$avatarBase}/women/44.jpg",
             ],
             [
                 'username' => 'director2',
@@ -40,6 +44,7 @@ class DirectorSeeder extends Seeder
                 'department' => null,
                 'director_level' => 'Assistant Director',
                 'is_active' => true,
+                'avatar_path' => "{$avatarBase}/men/33.jpg",
             ],
             [
                 'username' => 'director_inactive',
@@ -54,6 +59,7 @@ class DirectorSeeder extends Seeder
                 'director_level' => 'Head Director',
                 'is_active' => false,
                 'reason_for_deactivation' => 'Account deactivated for testing.',
+                'avatar_path' => "{$avatarBase}/women/68.jpg",
             ],
         ];
 
@@ -74,11 +80,12 @@ class DirectorSeeder extends Seeder
                 'last_name' => $data['last_name'],
                 'name' => trim(implode(' ', $nameParts)),
                 'phone' => $data['phone'] ?: null,
-                'contact_information' => $data['contact_information'] ?: null,
+                'contact_information' => $data['contact_information'] ?? null,
                 'position' => $data['position'] ?? null,
                 'department' => $data['department'] ?? null,
                 'director_level' => $data['director_level'] ?? null,
                 'is_active' => $data['is_active'] ?? true,
+                'avatar_path' => $data['avatar_path'] ?? null,
                 'reason_for_deactivation' => $data['reason_for_deactivation'] ?? null,
                 'password' => Hash::make('Password123'),
                 'remember_token' => Str::random(10),

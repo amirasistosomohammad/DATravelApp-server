@@ -12,6 +12,28 @@ class Personnel extends Authenticatable
     use HasApiTokens, HasFactory, Notifiable;
 
     /**
+     * Get the full name (first + middle + last).
+     */
+    public function getNameAttribute(): string
+    {
+        $parts = array_filter([
+            $this->first_name ?? '',
+            $this->middle_name ?? '',
+            $this->last_name ?? '',
+        ]);
+
+        return implode(' ', $parts) ?: $this->username ?? '';
+    }
+
+    /**
+     * Travel orders created by this personnel.
+     */
+    public function travelOrders(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(TravelOrder::class);
+    }
+
+    /**
      * The table associated with the model.
      *
      * @var string

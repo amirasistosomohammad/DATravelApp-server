@@ -66,6 +66,26 @@ class Director extends Authenticatable
     }
 
     /**
+     * Get full name (first + middle + last, or name column).
+     */
+    public function getNameAttribute(): string
+    {
+        if ($this->first_name && $this->last_name) {
+            $parts = array_filter([$this->first_name, $this->middle_name, $this->last_name]);
+            return implode(' ', $parts);
+        }
+        return $this->attributes['name'] ?? $this->username ?? '';
+    }
+
+    /**
+     * Approval steps assigned to this director.
+     */
+    public function travelOrderApprovals(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(TravelOrderApproval::class);
+    }
+
+    /**
      * Create a token with 12-hour expiration
      *
      * @param string $name

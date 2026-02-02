@@ -5,6 +5,8 @@ use App\Http\Controllers\IctAdminSettingsController;
 use App\Http\Controllers\PersonnelManagementController;
 use App\Http\Controllers\DirectorManagementController;
 use App\Http\Controllers\TimeLoggingController;
+use App\Http\Controllers\TravelOrderController;
+use App\Http\Controllers\DirectorTravelOrderController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -44,4 +46,23 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/ict-admin/change-password', [IctAdminSettingsController::class, 'changePassword']);
     Route::get('/ict-admin/branding', [IctAdminSettingsController::class, 'getBranding']);
     Route::post('/ict-admin/branding', [IctAdminSettingsController::class, 'updateBranding']);
+
+    // Personnel - Travel orders (Phase 4 & 5)
+    Route::get('/personnel/travel-orders', [TravelOrderController::class, 'index']);
+    Route::post('/personnel/travel-orders', [TravelOrderController::class, 'store']);
+    Route::get('/personnel/travel-orders/{travelOrder}', [TravelOrderController::class, 'show']);
+    Route::put('/personnel/travel-orders/{travelOrder}', [TravelOrderController::class, 'update']);
+    Route::delete('/personnel/travel-orders/{travelOrder}', [TravelOrderController::class, 'destroy']);
+    Route::post('/personnel/travel-orders/{travelOrder}/submit', [TravelOrderController::class, 'submit']);
+    Route::get('/personnel/directors', [TravelOrderController::class, 'availableDirectors']);
+    Route::get('/personnel/travel-order-attachments/{attachment}/download', [TravelOrderController::class, 'downloadAttachment'])
+        ->where('attachment', '[0-9]+');
+
+    // Director - Travel order reviews (Phase 5)
+    Route::get('/directors/travel-orders/pending', [DirectorTravelOrderController::class, 'pending']);
+    Route::get('/directors/travel-orders/history', [DirectorTravelOrderController::class, 'history']);
+    Route::get('/directors/travel-orders/{travelOrder}', [DirectorTravelOrderController::class, 'show']);
+    Route::post('/directors/travel-orders/{travelOrder}/action', [DirectorTravelOrderController::class, 'action']);
+    Route::get('/directors/travel-order-attachments/{attachment}/download', [DirectorTravelOrderController::class, 'downloadAttachment'])
+        ->where('attachment', '[0-9]+');
 });

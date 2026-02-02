@@ -89,31 +89,40 @@ class PersonnelSeeder extends Seeder
             'Administrative Services'
         ];
 
-        // Create 65 personnel with long names
+        // Real people portrait URLs (randomuser.me - men 0-99, women 0-99)
+        $avatarBase = 'https://randomuser.me/api/portraits';
+
+        // Create 65 personnel with long names, phone, and real avatar URLs
         for ($i = 1; $i <= 65; $i++) {
             $firstName = $firstNames[array_rand($firstNames)];
             $lastName = $lastNames[array_rand($lastNames)];
             $middleName = $middleNames[array_rand($middleNames)];
-            
+
             // Ensure some have very long names
             if ($i <= 10) {
-                // First 10 have extra long names
                 $firstName = 'Christopher' . ($i % 3 === 0 ? ' Alexander' : '');
                 $lastName = 'Montgomery' . ($i % 2 === 0 ? '-Fitzgerald' : '');
                 if ($i % 2 === 0) {
                     $middleName = 'Theodore Maximilian';
                 }
             }
-            
+
+            // Alternate men/women avatars; use index 0-99 for variety
+            $avatarNum = ($i - 1) % 100;
+            $gender = ($i % 2 === 0) ? 'women' : 'men';
+            $avatarPath = "{$avatarBase}/{$gender}/{$avatarNum}.jpg";
+
             Personnel::create([
                 'username'   => 'user' . str_pad($i, 4, '0', STR_PAD_LEFT),
                 'password'   => Hash::make('password123'),
                 'first_name' => $firstName,
                 'last_name'  => $lastName,
                 'middle_name' => $middleName,
+                'phone'      => '091' . str_pad((string) $i, 8, '0', STR_PAD_LEFT),
+                'avatar_path' => $avatarPath,
                 'position'   => $positions[array_rand($positions)],
                 'department' => $departments[array_rand($departments)],
-                'is_active'  => $i % 5 !== 0, // every 5th user inactive
+                'is_active'  => $i % 5 !== 0,
             ]);
         }
     }
