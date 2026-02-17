@@ -38,6 +38,7 @@ class Director extends Authenticatable
         'director_level',
         'is_active',
         'avatar_path',
+        'signature_path',
         'reason_for_deactivation',
     ];
 

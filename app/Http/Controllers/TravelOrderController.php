@@ -8,8 +8,11 @@ use App\Models\TravelOrder;
 use App\Models\TravelOrderApproval;
 use App\Models\TravelOrderAttachment;
 use Illuminate\Http\Request;
+use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 class TravelOrderController extends Controller
 {
@@ -94,7 +97,7 @@ class TravelOrderController extends Controller
             ], 404);
         }
 
-        $travelOrder->load(['attachments', 'approvals.director']);
+        $travelOrder->load(['attachments', 'approvals.director', 'personnel']);
 
         return response()->json([
             'success' => true,
@@ -114,12 +117,19 @@ class TravelOrderController extends Controller
         $validated = $request->validate([
             'travel_purpose' => ['required', 'string', 'max:500'],
             'destination' => ['required', 'string', 'max:255'],
+            'official_station' => ['nullable', 'string', 'max:255'],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after_or_equal:start_date'],
             'objectives' => ['nullable', 'string'],
             'per_diems_expenses' => ['nullable', 'numeric', 'min:0'],
+            'per_diems_note' => ['nullable', 'string', 'max:255'],
+            'assistant_or_laborers_allowed' => ['nullable', 'string', 'max:255'],
             'appropriation' => ['nullable', 'string', 'max:255'],
             'remarks' => ['nullable', 'string'],
+            'attachments' => ['nullable', 'array'],
+            'attachments.*' => ['nullable', 'file', 'max:20480'], // 20 MB in KB
+        ], [
+            'attachments.*.max' => 'Each attachment must not exceed 20 MB.',
         ]);
 
         /** @var Personnel $personnel */
@@ -170,12 +180,19 @@ class TravelOrderController extends Controller
         $validated = $request->validate([
             'travel_purpose' => ['sometimes', 'string', 'max:500'],
             'destination' => ['sometimes', 'string', 'max:255'],
+            'official_station' => ['nullable', 'string', 'max:255'],
             'start_date' => ['sometimes', 'date'],
             'end_date' => ['sometimes', 'date', 'after_or_equal:start_date'],
             'objectives' => ['nullable', 'string'],
             'per_diems_expenses' => ['nullable', 'numeric', 'min:0'],
+            'per_diems_note' => ['nullable', 'string', 'max:255'],
+            'assistant_or_laborers_allowed' => ['nullable', 'string', 'max:255'],
             'appropriation' => ['nullable', 'string', 'max:255'],
             'remarks' => ['nullable', 'string'],
+            'attachments' => ['nullable', 'array'],
+            'attachments.*' => ['nullable', 'file', 'max:20480'], // 20 MB in KB
+        ], [
+            'attachments.*.max' => 'Each attachment must not exceed 20 MB.',
         ]);
 
         $travelOrder->update($validated);
@@ -183,6 +200,7 @@ class TravelOrderController extends Controller
         // Handle attachment removals (client sends delete_ids)
         $deleteIds = $request->input('delete_attachment_ids', []);
         if (is_array($deleteIds) && !empty($deleteIds)) {
+            /** @var \Illuminate\Database\Eloquent\Collection<int, TravelOrderAttachment> $toDelete */
             $toDelete = TravelOrderAttachment::query()
                 ->where('travel_order_id', $travelOrder->id)
                 ->whereIn('id', $deleteIds)
@@ -230,7 +248,9 @@ class TravelOrderController extends Controller
             ], 422);
         }
 
-        foreach ($travelOrder->attachments as $att) {
+        /** @var \Illuminate\Database\Eloquent\Collection<int, TravelOrderAttachment> $attachments */
+        $attachments = $travelOrder->attachments()->get();
+        foreach ($attachments as $att) {
             Storage::disk('public')->delete($att->file_path);
         }
         $travelOrder->delete();
@@ -243,7 +263,7 @@ class TravelOrderController extends Controller
 
     /**
      * Submit a draft travel order for approval (personnel).
-     * Body: approving_director_id (required), recommending_director_id (optional).
+     * Body: recommending_director_id (required), approving_director_id (required).
      */
     public function submit(Request $request, TravelOrder $travelOrder)
     {
@@ -269,14 +289,12 @@ class TravelOrderController extends Controller
         }
 
         $validated = $request->validate([
+            'recommending_director_id' => ['required', 'integer', 'exists:directors,id', 'different:approving_director_id'],
             'approving_director_id' => ['required', 'integer', 'exists:directors,id'],
-            'recommending_director_id' => ['nullable', 'integer', 'exists:directors,id', 'different:approving_director_id'],
         ]);
 
+        $recommendingDirectorId = (int) $validated['recommending_director_id'];
         $approvingDirectorId = (int) $validated['approving_director_id'];
-        $recommendingDirectorId = isset($validated['recommending_director_id'])
-            ? (int) $validated['recommending_director_id']
-            : null;
 
         $approvingDirector = Director::find($approvingDirectorId);
         if (!$approvingDirector || !$approvingDirector->is_active) {
@@ -285,29 +303,27 @@ class TravelOrderController extends Controller
                 'message' => 'Selected approving director is not active.',
             ], 422);
         }
-        if ($recommendingDirectorId) {
-            $recDirector = Director::find($recommendingDirectorId);
-            if (!$recDirector || !$recDirector->is_active) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Selected recommending director is not active.',
-                ], 422);
-            }
+        $recDirector = Director::find($recommendingDirectorId);
+        if (!$recDirector || !$recDirector->is_active) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Selected recommending director is not active.',
+            ], 422);
         }
 
-        \DB::transaction(function () use ($travelOrder, $recommendingDirectorId, $approvingDirectorId) {
-            if ($recommendingDirectorId) {
-                TravelOrderApproval::create([
-                    'travel_order_id' => $travelOrder->id,
-                    'director_id' => $recommendingDirectorId,
-                    'step_order' => 1,
-                    'status' => 'pending',
-                ]);
-            }
+        DB::transaction(function () use ($travelOrder, $recommendingDirectorId, $approvingDirectorId) {
+            // Step 1: recommending director (required)
+            TravelOrderApproval::create([
+                'travel_order_id' => $travelOrder->id,
+                'director_id' => $recommendingDirectorId,
+                'step_order' => 1,
+                'status' => 'pending',
+            ]);
+            // Step 2: approving director
             TravelOrderApproval::create([
                 'travel_order_id' => $travelOrder->id,
                 'director_id' => $approvingDirectorId,
-                'step_order' => $recommendingDirectorId ? 2 : 1,
+                'step_order' => 2,
                 'status' => 'pending',
             ]);
             $travelOrder->update([
@@ -346,6 +362,61 @@ class TravelOrderController extends Controller
     }
 
     /**
+     * Export a travel order as PDF (official form layout).
+     * Query: include_ctt=1 to include CERTIFICATION TO TRAVEL section.
+     */
+    public function exportPdf(Request $request, TravelOrder $travelOrder)
+    {
+        if ($resp = $this->ensurePersonnel($request)) {
+            return $resp;
+        }
+
+        /** @var Personnel $personnel */
+        $personnel = $request->user();
+
+        if ((int) $travelOrder->personnel_id !== (int) $personnel->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Travel order not found.',
+            ], 404);
+        }
+
+        $includeCtt = (string) $request->query('include_ctt', '0') === '1';
+
+        $travelOrder->load(['personnel', 'attachments', 'approvals.director']);
+
+        try {
+            $pdf = Pdf::loadView('pdf.travel_order', [
+                'travelOrder' => $travelOrder,
+                'includeCtt' => $includeCtt,
+                'generatedAt' => now(),
+            ])->setPaper('a4', 'portrait');
+
+            $safeId = $travelOrder->id;
+            $filename = "TRAVEL_ORDER_{$safeId}.pdf";
+
+            return $pdf->download($filename);
+        } catch (\Exception $e) {
+            // Check if it's a GD extension error
+            if (str_contains($e->getMessage(), 'GD extension') || str_contains($e->getMessage(), 'gd')) {
+                \Log::error('PDF generation failed: GD extension not available', [
+                    'error' => $e->getMessage(),
+                    'php_version' => PHP_VERSION,
+                    'gd_loaded' => extension_loaded('gd'),
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'PDF generation failed: PHP GD extension is required but not enabled. Please enable GD extension in your PHP configuration and restart the server.',
+                ], 500);
+            }
+
+            // Re-throw other exceptions
+            throw $e;
+        }
+    }
+
+    /**
      * Download an attachment (own travel order only).
      */
     public function downloadAttachment(Request $request, TravelOrderAttachment $attachment): StreamedResponse|\Illuminate\Http\JsonResponse
@@ -362,24 +433,28 @@ class TravelOrderController extends Controller
             return response()->json(['success' => false, 'message' => 'Not found.'], 404);
         }
 
-        if (!Storage::disk('public')->exists($attachment->file_path)) {
+        /** @var FilesystemAdapter $disk */
+        $disk = Storage::disk('public');
+
+        if (!$disk->exists($attachment->file_path)) {
             return response()->json(['success' => false, 'message' => 'File not found.'], 404);
         }
 
-        return Storage::disk('public')->download(
+        return $disk->download(
             $attachment->file_path,
             $attachment->file_name,
-            ['Content-Type' => Storage::disk('public')->mimeType($attachment->file_path)]
+            ['Content-Type' => $disk->mimeType($attachment->file_path)]
         );
     }
 
     /**
      * Store uploaded attachment files for the travel order.
+     * Max 20 MB per file. Ensure php.ini: upload_max_filesize and post_max_size >= 20M.
      */
     protected function storeAttachments(Request $request, TravelOrder $travelOrder): void
     {
         $allowedTypes = ['itinerary', 'memorandum', 'invitation', 'other'];
-        $maxSizeMb = 10;
+        $maxSizeMb = 20;
         $maxSizeBytes = $maxSizeMb * 1024 * 1024;
 
         $files = $request->file('attachments');

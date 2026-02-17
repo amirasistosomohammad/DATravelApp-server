@@ -98,4 +98,3 @@ class DirectorSeeder extends Seeder
         }
     }
 }
-

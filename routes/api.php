@@ -7,6 +7,7 @@ use App\Http\Controllers\DirectorManagementController;
 use App\Http\Controllers\TimeLoggingController;
 use App\Http\Controllers\TravelOrderController;
 use App\Http\Controllers\DirectorTravelOrderController;
+use App\Http\Controllers\DirectorProfileController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -51,6 +52,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/personnel/travel-orders', [TravelOrderController::class, 'index']);
     Route::post('/personnel/travel-orders', [TravelOrderController::class, 'store']);
     Route::get('/personnel/travel-orders/{travelOrder}', [TravelOrderController::class, 'show']);
+    Route::get('/personnel/travel-orders/{travelOrder}/export/pdf', [TravelOrderController::class, 'exportPdf']);
     Route::put('/personnel/travel-orders/{travelOrder}', [TravelOrderController::class, 'update']);
     Route::delete('/personnel/travel-orders/{travelOrder}', [TravelOrderController::class, 'destroy']);
     Route::post('/personnel/travel-orders/{travelOrder}/submit', [TravelOrderController::class, 'submit']);
@@ -65,4 +67,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/directors/travel-orders/{travelOrder}/action', [DirectorTravelOrderController::class, 'action']);
     Route::get('/directors/travel-order-attachments/{attachment}/download', [DirectorTravelOrderController::class, 'downloadAttachment'])
         ->where('attachment', '[0-9]+');
+
+    // Director - self-service profile (signature)
+    Route::get('/directors/profile/signature', [DirectorProfileController::class, 'getSignature']);
+    Route::post('/directors/profile/signature', [DirectorProfileController::class, 'updateSignature']);
 });

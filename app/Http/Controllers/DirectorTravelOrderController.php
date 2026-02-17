@@ -7,11 +7,28 @@ use App\Models\TravelOrder;
 use App\Models\TravelOrderApproval;
 use App\Models\TravelOrderAttachment;
 use Illuminate\Http\Request;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class DirectorTravelOrderController extends Controller
 {
+    /**
+     * Approving directors (step 2) can only see/act after the recommending step is completed.
+     */
+    protected function recommendStepCompleted(int $travelOrderId): bool
+    {
+        $recommend = TravelOrderApproval::query()
+            ->where('travel_order_id', $travelOrderId)
+            ->where('step_order', 1)
+            ->first();
+
+        if (!$recommend) {
+            return false;
+        }
+
+        return in_array($recommend->status, ['recommended', 'approved'], true);
+    }
     /**
      * Ensure the authenticated user is a Director.
      */
@@ -41,13 +58,23 @@ class DirectorTravelOrderController extends Controller
         /** @var Director $director */
         $director = $request->user();
 
-        $approvalIds = TravelOrderApproval::query()
+        // Only return TOs that are pending THIS director's action.
+        // For approving directors (step 2), the TO becomes visible only after step 1 is completed.
+        $pendingApprovals = TravelOrderApproval::query()
             ->where('director_id', $director->id)
             ->where('status', 'pending')
+            ->get(['travel_order_id', 'step_order']);
+
+        $visibleTravelOrderIds = $pendingApprovals
+            ->filter(function ($a) {
+                /** @var TravelOrderApproval $a */
+                if ((int) $a->step_order === 1) return true;
+                return $this->recommendStepCompleted((int) $a->travel_order_id);
+            })
             ->pluck('travel_order_id');
 
         $query = TravelOrder::query()
-            ->whereIn('id', $approvalIds)
+            ->whereIn('id', $visibleTravelOrderIds)
             ->where('status', 'pending')
             ->with(['attachments', 'personnel', 'approvals.director'])
             ->orderByDesc('submitted_at');
@@ -100,6 +127,14 @@ class DirectorTravelOrderController extends Controller
             ], 404);
         }
 
+        // Gate step 2 access until step 1 is completed.
+        if ((int) $approval->step_order === 2 && !$this->recommendStepCompleted((int) $travelOrder->id)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Travel order not found or not pending your action.',
+            ], 404);
+        }
+
         $travelOrder->load(['attachments', 'personnel', 'approvals.director']);
         $travelOrder->setRelation('current_approval', $approval);
 
@@ -137,6 +172,14 @@ class DirectorTravelOrderController extends Controller
             ->first();
 
         if (!$approval) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Travel order not found or not pending your action.',
+            ], 404);
+        }
+
+        // Gate step 2 actions until step 1 is completed.
+        if ((int) $approval->step_order === 2 && !$this->recommendStepCompleted((int) $travelOrder->id)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Travel order not found or not pending your action.',
@@ -276,10 +319,13 @@ class DirectorTravelOrderController extends Controller
             return response()->json(['success' => false, 'message' => 'File not found.'], 404);
         }
 
-        return Storage::disk('public')->download(
+        /** @var FilesystemAdapter $disk */
+        $disk = Storage::disk('public');
+
+        return $disk->download(
             $attachment->file_path,
             $attachment->file_name,
-            ['Content-Type' => Storage::disk('public')->mimeType($attachment->file_path)]
+            ['Content-Type' => $disk->mimeType($attachment->file_path)]
         );
     }
 }

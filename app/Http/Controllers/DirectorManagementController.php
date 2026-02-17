@@ -6,6 +6,7 @@ use App\Models\Director;
 use App\Models\IctAdmin;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
@@ -135,6 +136,7 @@ class DirectorManagementController extends Controller
             'department' => ['nullable', 'string', 'max:255'],
             'director_level' => ['nullable', 'string', 'max:255'],
             'avatar' => ['nullable', 'image', 'mimes:jpeg,png,jpg,gif,svg,webp', 'max:2048'],
+            'signature' => ['nullable', 'image', 'mimes:jpeg,png,jpg,gif,svg,webp', 'max:2048'],
             'is_active' => ['sometimes', 'boolean'],
             // Required if is_active is explicitly false/0
             'reason_for_deactivation' => ['nullable', 'string', 'max:500', 'required_if:is_active,0'],
@@ -142,11 +144,20 @@ class DirectorManagementController extends Controller
 
         // Handle avatar upload
         $avatarPath = null;
+        $signaturePath = null;
         if ($request->hasFile('avatar')) {
             $file = $request->file('avatar');
             $filename = 'director_' . time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
             $path = $file->storeAs('director-avatars', $filename, 'public');
             $avatarPath = $path;
+        }
+
+        // Handle signature upload
+        if ($request->hasFile('signature')) {
+            $file = $request->file('signature');
+            $filename = 'director_signature_' . time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+            $path = $file->storeAs('director-signatures', $filename, 'public');
+            $signaturePath = $path;
         }
 
         $fullNameParts = array_filter([
@@ -171,6 +182,7 @@ class DirectorManagementController extends Controller
             'department' => $validated['department'] ?? null,
             'director_level' => $validated['director_level'] ?? null,
             'avatar_path' => $avatarPath,
+            'signature_path' => $signaturePath,
             'is_active' => $validated['is_active'] ?? true,
             'reason_for_deactivation' => $validated['reason_for_deactivation'] ?? null,
         ];
@@ -268,6 +280,17 @@ class DirectorManagementController extends Controller
             $validated['avatar_path'] = $path;
         }
 
+        // Handle signature upload
+        if ($request->hasFile('signature')) {
+            if ($director->signature_path && Storage::disk('public')->exists($director->signature_path)) {
+                Storage::disk('public')->delete($director->signature_path);
+            }
+            $file = $request->file('signature');
+            $filename = 'director_signature_' . time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+            $path = $file->storeAs('director-signatures', $filename, 'public');
+            $validated['signature_path'] = $path;
+        }
+
         // Clear reason_for_deactivation if is_active is true
         if (isset($validated['is_active']) && $validated['is_active']) {
             $validated['reason_for_deactivation'] = null;
@@ -291,6 +314,7 @@ class DirectorManagementController extends Controller
         }
 
         unset($validated['avatar']);
+        unset($validated['signature']);
         unset($validated['remove_avatar']);
 
         $director->fill($validated);
@@ -332,12 +356,15 @@ class DirectorManagementController extends Controller
     {
         $path = 'director-avatars/' . $filename;
 
-        if (!Storage::disk('public')->exists($path)) {
+        /** @var FilesystemAdapter $disk */
+        $disk = Storage::disk('public');
+
+        if (!$disk->exists($path)) {
             abort(404);
         }
 
-        $file = Storage::disk('public')->get($path);
-        $type = Storage::disk('public')->mimeType($path);
+        $file = $disk->get($path);
+        $type = $disk->mimeType($path);
 
         return response($file, 200)->header('Content-Type', $type);
     }
