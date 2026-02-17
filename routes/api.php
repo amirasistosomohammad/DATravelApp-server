@@ -19,6 +19,11 @@ Route::get('/branding', [IctAdminSettingsController::class, 'getBrandingPublic']
 Route::get('/personnel-avatar/{filename}', [PersonnelManagementController::class, 'getAvatar']);
 Route::get('/director-avatar/{filename}', [DirectorManagementController::class, 'getAvatar']);
 
+// Director signature image (signed URL; correct Content-Type, works over HTTPS in production)
+Route::get('/directors/profile/signature/image', [DirectorProfileController::class, 'serveSignatureImage'])
+    ->name('api.directors.signature.image')
+    ->middleware('signed');
+
 // Protected routes (require authentication)
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
