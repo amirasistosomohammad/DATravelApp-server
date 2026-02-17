@@ -383,7 +383,12 @@ class TravelOrderController extends Controller
 
         $includeCtt = (string) $request->query('include_ctt', '0') === '1';
 
+        // Load directors with signature_path so PDF can embed e-signatures
         $travelOrder->load(['personnel', 'attachments', 'approvals.director']);
+
+        if (app()->environment('production') && !extension_loaded('gd')) {
+            \Log::warning('PDF export: PHP GD extension is not enabled; director signatures will not appear in the PDF.');
+        }
 
         try {
             $pdf = Pdf::loadView('pdf.travel_order', [

@@ -42,19 +42,19 @@
     $reco = $travelOrder->approvals->firstWhere('step_order', 1);
     $appr = $travelOrder->approvals->firstWhere('step_order', 2);
     
-    // CRITICAL: DomPDF requires GD extension for image processing (even base64)
+    // DomPDF requires GD to render images (even base64). Use Storage so path matches uploads.
     $gdEnabled = extension_loaded('gd');
-    
-    // Only embed signatures if GD is available (otherwise DomPDF will crash)
+    $storage = \Illuminate\Support\Facades\Storage::disk('public');
+
     $recoSigDataUri = null;
     if ($gdEnabled && $reco && $reco->director && $reco->director->signature_path) {
-        $absPath = storage_path('app/public/' . $reco->director->signature_path);
-        if (file_exists($absPath) && is_readable($absPath)) {
-            $imageData = file_get_contents($absPath);
-            if ($imageData) {
-                $mimeType = mime_content_type($absPath);
+        $path = $reco->director->signature_path;
+        if ($storage->exists($path)) {
+            $imageData = $storage->get($path);
+            if ($imageData !== null && $imageData !== '') {
+                $mimeType = $storage->mimeType($path);
                 if (!$mimeType) {
-                    $ext = strtolower(pathinfo($absPath, PATHINFO_EXTENSION));
+                    $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
                     $mimeMap = ['png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'gif' => 'image/gif', 'webp' => 'image/webp', 'svg' => 'image/svg+xml'];
                     $mimeType = $mimeMap[$ext] ?? 'image/png';
                 }
@@ -65,13 +65,13 @@
 
     $apprSigDataUri = null;
     if ($gdEnabled && $appr && $appr->director && $appr->director->signature_path) {
-        $absPath = storage_path('app/public/' . $appr->director->signature_path);
-        if (file_exists($absPath) && is_readable($absPath)) {
-            $imageData = file_get_contents($absPath);
-            if ($imageData) {
-                $mimeType = mime_content_type($absPath);
+        $path = $appr->director->signature_path;
+        if ($storage->exists($path)) {
+            $imageData = $storage->get($path);
+            if ($imageData !== null && $imageData !== '') {
+                $mimeType = $storage->mimeType($path);
                 if (!$mimeType) {
-                    $ext = strtolower(pathinfo($absPath, PATHINFO_EXTENSION));
+                    $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
                     $mimeMap = ['png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'gif' => 'image/gif', 'webp' => 'image/webp', 'svg' => 'image/svg+xml'];
                     $mimeType = $mimeMap[$ext] ?? 'image/png';
                 }
