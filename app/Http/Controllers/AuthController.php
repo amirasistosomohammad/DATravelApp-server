@@ -10,6 +10,7 @@ use App\Models\IctAdmin;
 use App\Models\Personnel;
 use App\Models\Director;
 use App\Models\TimeLog;
+use App\Models\TravelOrderApproval;
 
 class AuthController extends Controller
 {
@@ -149,6 +150,14 @@ class AuthController extends Controller
             'department' => $user->department ?? 'Department of Agriculture',
         ];
 
+        // For directors, check if they have recommend role
+        if ($user instanceof Director) {
+            $userData['has_recommend_role'] = TravelOrderApproval::query()
+                ->where('director_id', $user->id)
+                ->where('step_order', 1)
+                ->exists();
+        }
+
         // Avatar URL: full URL from internet (e.g. seeded) or API path
         if ($user instanceof Personnel && $user->avatar_path) {
             $userData['avatar'] = str_starts_with($user->avatar_path, 'http')
@@ -208,6 +217,14 @@ class AuthController extends Controller
             'position' => $user->position ?? null,
             'department' => $user->department ?? 'Department of Agriculture',
         ];
+
+        // For directors, check if they have recommend role
+        if ($user instanceof Director) {
+            $userData['has_recommend_role'] = TravelOrderApproval::query()
+                ->where('director_id', $user->id)
+                ->where('step_order', 1)
+                ->exists();
+        }
 
         // Avatar URL: full URL from internet (e.g. seeded) or API path
         if ($user instanceof Personnel && $user->avatar_path) {

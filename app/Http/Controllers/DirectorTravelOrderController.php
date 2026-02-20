@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Director;
+use App\Models\Personnel;
 use App\Models\TravelOrder;
 use App\Models\TravelOrderApproval;
 use App\Models\TravelOrderAttachment;
@@ -241,6 +242,9 @@ class DirectorTravelOrderController extends Controller
 
     /**
      * History: travel orders this director has acted on (recommended, approved, rejected).
+     * For "approved" filter: shows travel orders with overall status = approved where director was involved.
+     * For "recommended" filter: shows travel orders where director's individual action was recommend.
+     * For "rejected" filter: shows travel orders where director's individual action was reject.
      */
     public function history(Request $request)
     {
@@ -251,19 +255,44 @@ class DirectorTravelOrderController extends Controller
         /** @var Director $director */
         $director = $request->user();
 
-        $approvalIds = TravelOrderApproval::query()
+        $status = $request->query('status'); // approved | rejected | recommended | all
+        
+        // Get all travel order IDs where this director has an approval record
+        $allApprovalIds = TravelOrderApproval::query()
             ->where('director_id', $director->id)
-            ->whereIn('status', ['recommended', 'approved', 'rejected'])
-            ->pluck('travel_order_id');
+            ->pluck('travel_order_id')
+            ->unique();
 
         $query = TravelOrder::query()
-            ->whereIn('id', $approvalIds)
+            ->whereIn('id', $allApprovalIds)
             ->with(['attachments', 'personnel', 'approvals.director'])
             ->orderByDesc('updated_at');
 
-        $status = $request->query('status'); // approved | rejected | recommended | all
-        if ($status && in_array($status, ['approved', 'rejected', 'recommended'], true)) {
-            $query->where('status', $status);
+        // Apply filters based on status
+        if ($status === 'approved') {
+            // Show travel orders with overall status = approved (where director was involved)
+            $query->where('status', 'approved');
+        } elseif ($status === 'recommended') {
+            // Show travel orders where director's individual action was "recommend"
+            $recommendedApprovalIds = TravelOrderApproval::query()
+                ->where('director_id', $director->id)
+                ->where('status', 'recommended')
+                ->pluck('travel_order_id');
+            $query->whereIn('id', $recommendedApprovalIds);
+        } elseif ($status === 'rejected') {
+            // Show travel orders where director's individual action was "reject"
+            $rejectedApprovalIds = TravelOrderApproval::query()
+                ->where('director_id', $director->id)
+                ->where('status', 'rejected')
+                ->pluck('travel_order_id');
+            $query->whereIn('id', $rejectedApprovalIds);
+        } else {
+            // Show all: travel orders where director has acted (recommended, approved, or rejected)
+            $actedApprovalIds = TravelOrderApproval::query()
+                ->where('director_id', $director->id)
+                ->whereIn('status', ['recommended', 'approved', 'rejected'])
+                ->pluck('travel_order_id');
+            $query->whereIn('id', $actedApprovalIds);
         }
 
         $perPage = (int) $request->query('per_page', 10);
@@ -327,5 +356,57 @@ class DirectorTravelOrderController extends Controller
             $attachment->file_name,
             ['Content-Type' => $disk->mimeType($attachment->file_path)]
         );
+    }
+
+    /**
+     * Export a travel order as Excel (directors can export any travel order they have access to).
+     */
+    public function exportExcel(Request $request, TravelOrder $travelOrder)
+    {
+        if ($resp = $this->ensureDirector($request)) {
+            return $resp;
+        }
+
+        if (!extension_loaded('zip')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Excel export requires the PHP ZIP extension (ext-zip). Please enable it in your PHP configuration and restart the server.',
+            ], 500);
+        }
+
+        /** @var Director $director */
+        $director = $request->user();
+
+        // Check if director has access to this travel order (has an approval record)
+        $hasAccess = TravelOrderApproval::query()
+            ->where('travel_order_id', $travelOrder->id)
+            ->where('director_id', $director->id)
+            ->exists();
+
+        if (!$hasAccess) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Travel order not found.',
+            ], 404);
+        }
+
+        // Create a new request with personnel user to reuse TravelOrderController's exportExcel method
+        $personnel = $travelOrder->personnel;
+        if (!$personnel) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Travel order personnel not found.',
+            ], 404);
+        }
+
+        // Create a new request instance with personnel user
+        $newRequest = Request::create($request->url(), 'GET', $request->query());
+        $newRequest->setUserResolver(function () use ($personnel) {
+            return $personnel;
+        });
+
+        // Use TravelOrderController's exportExcel method
+        $travelOrderController = new \App\Http\Controllers\TravelOrderController();
+        return $travelOrderController->exportExcel($newRequest, $travelOrder);
     }
 }

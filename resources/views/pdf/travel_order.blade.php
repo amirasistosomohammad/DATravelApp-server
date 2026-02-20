@@ -122,7 +122,7 @@
     </tr>
     <tr>
         <td class="label">Purpose:</td>
-        <td colspan="2" class="value">{{ $purpose }}</td>
+        <td colspan="2" class="value">{!! nl2br(e($purpose)) !!}</td>
     </tr>
     <tr>
         <td class="label">Objectives:</td>
@@ -154,9 +154,12 @@
             @else
                 <div class="sigline"></div>
             @endif
-            <div class="small" style="margin-top:4px;">
+            <div class="small" style="margin-top:6px;">
                 @if($reco && $reco->director)
-                    <span class="value">{{ trim(collect([$reco->director->first_name, $reco->director->middle_name, $reco->director->last_name])->filter()->implode(' ')) }}</span>
+                    <span class="value" style="border-bottom:1px solid #111; padding-bottom:1px;">{{ trim(collect([$reco->director->first_name, $reco->director->middle_name, $reco->director->last_name])->filter()->implode(' ')) }}</span>
+                    @if(!empty($reco->director->position))
+                        <div class="small" style="margin-top:2px; font-weight:normal;">{{ $reco->director->position }}</div>
+                    @endif
                 @else
                     <span class="na">N/A</span>
                 @endif
@@ -171,9 +174,12 @@
             @else
                 <div class="sigline"></div>
             @endif
-            <div class="small" style="margin-top:4px;">
+            <div class="small" style="margin-top:6px;">
                 @if($appr && $appr->director)
-                    <span class="value">{{ trim(collect([$appr->director->first_name, $appr->director->middle_name, $appr->director->last_name])->filter()->implode(' ')) }}</span>
+                    <span class="value" style="border-bottom:1px solid #111; padding-bottom:1px;">{{ trim(collect([$appr->director->first_name, $appr->director->middle_name, $appr->director->last_name])->filter()->implode(' ')) }}</span>
+                    @if(!empty($appr->director->position))
+                        <div class="small" style="margin-top:2px; font-weight:normal;">{{ $appr->director->position }}</div>
+                    @endif
                 @else
                     <span class="na">N/A</span>
                 @endif
@@ -190,7 +196,7 @@
         <span class="value">{{ $departureDate }}</span> to <span class="value">{{ $returnDate }}</span>
         with the following purpose:
         <br><br>
-        <span class="value">{{ $purpose }}</span>
+        <span class="value">{!! nl2br(e($purpose)) !!}</span>
         <br><br>
         a. The official mission/task cannot be performed by / or assigned to any other regular/permanent official and/or employee of agency.
         <br>

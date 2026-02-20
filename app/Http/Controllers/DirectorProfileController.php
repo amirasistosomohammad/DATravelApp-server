@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Director;
+use App\Models\TravelOrderApproval;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -26,6 +27,54 @@ class DirectorProfileController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * Get the current director's profile (database details).
+     */
+    public function show(Request $request)
+    {
+        if ($resp = $this->ensureDirector($request)) {
+            return $resp;
+        }
+
+        /** @var Director $director */
+        $director = $request->user();
+
+        // Check if director has ever been assigned as a recommending director (step_order = 1)
+        $hasRecommendRole = TravelOrderApproval::query()
+            ->where('director_id', $director->id)
+            ->where('step_order', 1)
+            ->exists();
+
+        $data = [
+            'id' => $director->id,
+            'username' => $director->username,
+            'name' => $director->name,
+            'first_name' => $director->first_name ?? null,
+            'middle_name' => $director->middle_name ?? null,
+            'last_name' => $director->last_name ?? null,
+            'position' => $director->position ?? null,
+            'department' => $director->department ?? 'Department of Agriculture',
+            'director_level' => $director->director_level ?? null,
+            'phone' => $director->phone ?? null,
+            'contact_information' => $director->contact_information ?? null,
+            'is_active' => $director->is_active ?? true,
+            'has_recommend_role' => $hasRecommendRole,
+        ];
+
+        if ($director->avatar_path) {
+            $data['avatar'] = str_starts_with($director->avatar_path, 'http')
+                ? $director->avatar_path
+                : url('/storage/' . ltrim($director->avatar_path, '/'));
+        } else {
+            $data['avatar'] = null;
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => ['profile' => $data],
+        ], 200);
     }
 
     /**

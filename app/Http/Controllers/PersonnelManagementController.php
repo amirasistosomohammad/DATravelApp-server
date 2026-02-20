@@ -126,8 +126,8 @@ class PersonnelManagementController extends Controller
             'phone' => ['nullable', 'string', 'max:20'],
             'password' => ['required', 'string', 'min:8'],
             'password_confirmation' => ['required_with:password', 'same:password'],
-            'position' => ['nullable', 'string', 'max:255'],
-            'department' => ['nullable', 'string', 'max:255'],
+            'position' => ['required', 'string', 'max:255'],
+            'department' => ['required', 'string', 'max:255'],
             'avatar' => ['nullable', 'image', 'mimes:jpeg,png,jpg,gif,svg,webp', 'max:2048'],
             'is_active' => ['sometimes', 'boolean'],
             // Required if is_active is explicitly false/0
@@ -143,10 +143,6 @@ class PersonnelManagementController extends Controller
             $avatarPath = $path;
         }
 
-        // IMPORTANT:
-        // `department` in the DB is NOT NULL with a default value.
-        // If we pass NULL explicitly, MySQL will throw an integrity error.
-        // So we only include `department` if the client actually provided it.
         $createData = [
             'username' => $validated['username'],
             'first_name' => $validated['first_name'],
@@ -154,15 +150,12 @@ class PersonnelManagementController extends Controller
             'middle_name' => $validated['middle_name'] ?? null,
             'phone' => $validated['phone'] ?? null,
             'password' => Hash::make($validated['password']),
-            'position' => $validated['position'] ?? null,
+            'position' => $validated['position'],
+            'department' => $validated['department'],
             'avatar_path' => $avatarPath,
             'is_active' => $validated['is_active'] ?? true,
             'reason_for_deactivation' => $validated['reason_for_deactivation'] ?? null,
         ];
-
-        if (array_key_exists('department', $validated) && trim((string) $validated['department']) !== '') {
-            $createData['department'] = $validated['department'];
-        }
 
         $personnel = Personnel::create($createData);
 
@@ -195,8 +188,8 @@ class PersonnelManagementController extends Controller
             'phone' => ['nullable', 'string', 'max:20'],
             'password' => ['nullable', 'string', 'min:8'],
             'password_confirmation' => ['nullable', 'required_with:password', 'same:password'],
-            'position' => ['nullable', 'string', 'max:255'],
-            'department' => ['nullable', 'string', 'max:255'],
+            'position' => ['required', 'string', 'max:255'],
+            'department' => ['required', 'string', 'max:255'],
             'avatar' => ['nullable', 'image', 'mimes:jpeg,png,jpg,gif,svg,webp', 'max:2048'],
             'remove_avatar' => ['sometimes', 'boolean'],
             'is_active' => ['sometimes', 'boolean'],
@@ -204,14 +197,8 @@ class PersonnelManagementController extends Controller
             'reason_for_deactivation' => ['nullable', 'string', 'max:500', 'required_if:is_active,0'],
         ]);
 
-        // Normalize empty strings to NULL so clearing fields from the UI works.
-        // (department is nullable now; position was already nullable)
-        if (array_key_exists('department', $validated) && trim((string) $validated['department']) === '') {
-            $validated['department'] = null;
-        }
-        if (array_key_exists('position', $validated) && trim((string) $validated['position']) === '') {
-            $validated['position'] = null;
-        }
+        // Normalize empty strings to NULL for optional fields only
+        // Note: department and position are now required, so don't normalize them
 
         // Handle password update
         if (array_key_exists('password', $validated) && $validated['password']) {

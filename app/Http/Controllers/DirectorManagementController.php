@@ -133,7 +133,7 @@ class DirectorManagementController extends Controller
             'password' => ['required', 'string', 'min:8'],
             'password_confirmation' => ['required_with:password', 'same:password'],
             'position' => ['required', 'string', 'max:255'],
-            'department' => ['nullable', 'string', 'max:255'],
+            'department' => ['required', 'string', 'max:255'],
             'director_level' => ['nullable', 'string', 'max:255'],
             'avatar' => ['nullable', 'image', 'mimes:jpeg,png,jpg,gif,svg,webp', 'max:2048'],
             'signature' => ['nullable', 'image', 'mimes:jpeg,png,jpg,gif,svg,webp', 'max:2048'],
@@ -233,7 +233,7 @@ class DirectorManagementController extends Controller
             'password' => ['nullable', 'string', 'min:8'],
             'password_confirmation' => ['nullable', 'required_with:password', 'same:password'],
             'position' => ['required', 'string', 'max:255'],
-            'department' => ['nullable', 'string', 'max:255'],
+            'department' => ['required', 'string', 'max:255'],
             'director_level' => ['nullable', 'string', 'max:255'],
             'avatar' => ['nullable', 'image', 'mimes:jpeg,png,jpg,gif,svg,webp', 'max:2048'],
             'remove_avatar' => ['sometimes', 'boolean'],
@@ -242,8 +242,9 @@ class DirectorManagementController extends Controller
             'reason_for_deactivation' => ['nullable', 'string', 'max:500', 'required_if:is_active,0'],
         ]);
 
-        // Normalize empty strings to NULL so clearing fields works.
-        foreach (['department', 'position', 'phone', 'director_level', 'email', 'contact_information'] as $field) {
+        // Normalize empty strings to NULL for optional fields only
+        // Note: department and position are now required, so don't normalize them
+        foreach (['phone', 'director_level', 'email', 'contact_information'] as $field) {
             if (array_key_exists($field, $validated) && trim((string) $validated[$field]) === '') {
                 $validated[$field] = null;
             }

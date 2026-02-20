@@ -8,6 +8,7 @@ use App\Http\Controllers\TimeLoggingController;
 use App\Http\Controllers\TravelOrderController;
 use App\Http\Controllers\DirectorTravelOrderController;
 use App\Http\Controllers\DirectorProfileController;
+use App\Http\Controllers\PersonnelProfileController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -53,11 +54,18 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/ict-admin/branding', [IctAdminSettingsController::class, 'getBranding']);
     Route::post('/ict-admin/branding', [IctAdminSettingsController::class, 'updateBranding']);
 
+    // Personnel - Profile (view own details)
+    Route::get('/personnel/profile', [PersonnelProfileController::class, 'show']);
+
     // Personnel - Travel orders (Phase 4 & 5)
     Route::get('/personnel/travel-orders', [TravelOrderController::class, 'index']);
+    // History and calendar MUST be defined before any {travelOrder} bindings
+    Route::get('/personnel/travel-orders/history', [TravelOrderController::class, 'history']);
+    Route::get('/personnel/travel-orders/calendar', [TravelOrderController::class, 'calendar']);
     Route::post('/personnel/travel-orders', [TravelOrderController::class, 'store']);
     Route::get('/personnel/travel-orders/{travelOrder}', [TravelOrderController::class, 'show']);
     Route::get('/personnel/travel-orders/{travelOrder}/export/pdf', [TravelOrderController::class, 'exportPdf']);
+    Route::get('/personnel/travel-orders/{travelOrder}/export/excel', [TravelOrderController::class, 'exportExcel']);
     Route::put('/personnel/travel-orders/{travelOrder}', [TravelOrderController::class, 'update']);
     Route::delete('/personnel/travel-orders/{travelOrder}', [TravelOrderController::class, 'destroy']);
     Route::post('/personnel/travel-orders/{travelOrder}/submit', [TravelOrderController::class, 'submit']);
@@ -69,11 +77,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/directors/travel-orders/pending', [DirectorTravelOrderController::class, 'pending']);
     Route::get('/directors/travel-orders/history', [DirectorTravelOrderController::class, 'history']);
     Route::get('/directors/travel-orders/{travelOrder}', [DirectorTravelOrderController::class, 'show']);
+    Route::get('/directors/travel-orders/{travelOrder}/export/excel', [DirectorTravelOrderController::class, 'exportExcel']);
     Route::post('/directors/travel-orders/{travelOrder}/action', [DirectorTravelOrderController::class, 'action']);
     Route::get('/directors/travel-order-attachments/{attachment}/download', [DirectorTravelOrderController::class, 'downloadAttachment'])
         ->where('attachment', '[0-9]+');
 
-    // Director - self-service profile (signature)
+    // Director - self-service profile
+    Route::get('/directors/profile', [DirectorProfileController::class, 'show']);
     Route::get('/directors/profile/signature', [DirectorProfileController::class, 'getSignature']);
     Route::post('/directors/profile/signature', [DirectorProfileController::class, 'updateSignature']);
 });
