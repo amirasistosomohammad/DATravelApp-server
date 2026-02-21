@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Director;
+use App\Models\IctAdmin;
 use App\Models\Personnel;
 use App\Models\TravelOrder;
 use App\Models\TravelOrderApproval;
@@ -38,6 +39,23 @@ class TravelOrderController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Only personnel can manage travel orders.',
+            ], 403);
+        }
+
+        return null;
+    }
+
+    /**
+     * Ensure the authenticated user is ICT Admin.
+     */
+    protected function ensureIctAdmin(Request $request): ?\Illuminate\Http\JsonResponse
+    {
+        $user = $request->user();
+
+        if (!$user instanceof IctAdmin) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only ICT Admin users can access this resource.',
             ], 403);
         }
 
@@ -86,6 +104,86 @@ class TravelOrderController extends Controller
                     'per_page' => $paginator->perPage(),
                 ],
             ],
+        ]);
+    }
+
+    /**
+     * List all travel orders for ICT Admin.
+     */
+    public function indexForAdmin(Request $request)
+    {
+        if ($resp = $this->ensureIctAdmin($request)) {
+            return $resp;
+        }
+
+        $query = TravelOrder::query()
+            ->with(['attachments', 'approvals.director', 'personnel'])
+            ->orderByDesc('updated_at');
+
+        // Status filter
+        $status = $request->query('status');
+        if ($status && in_array($status, ['draft', 'pending', 'approved', 'rejected'], true)) {
+            $query->where('status', $status);
+        }
+
+        // Search filter
+        if ($search = $request->query('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('travel_purpose', 'like', "%{$search}%")
+                    ->orWhere('destination', 'like', "%{$search}%")
+                    ->orWhereHas('personnel', function ($personnelQuery) use ($search) {
+                        $personnelQuery->where('first_name', 'like', "%{$search}%")
+                            ->orWhere('last_name', 'like', "%{$search}%")
+                            ->orWhere('username', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        // Date filters
+        if ($dateFrom = $request->query('date_from')) {
+            $query->where('start_date', '>=', $dateFrom);
+        }
+        if ($dateTo = $request->query('date_to')) {
+            $query->where('end_date', '<=', $dateTo);
+        }
+
+        $perPage = (int) $request->query('per_page', 10);
+        if ($perPage <= 0) {
+            $perPage = 10;
+        }
+
+        $paginator = $query->paginate($perPage);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'items' => $paginator->items(),
+                'pagination' => [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'total' => $paginator->total(),
+                    'from' => $paginator->firstItem() ?? 0,
+                    'to' => $paginator->lastItem() ?? 0,
+                    'per_page' => $paginator->perPage(),
+                ],
+            ],
+        ]);
+    }
+
+    /**
+     * Show a single travel order for ICT Admin (any travel order).
+     */
+    public function showForAdmin(Request $request, TravelOrder $travelOrder)
+    {
+        if ($resp = $this->ensureIctAdmin($request)) {
+            return $resp;
+        }
+
+        $travelOrder->load(['attachments', 'approvals.director', 'personnel']);
+
+        return response()->json([
+            'success' => true,
+            'data' => $travelOrder,
         ]);
     }
 
@@ -557,6 +655,62 @@ class TravelOrderController extends Controller
             // Re-throw other exceptions
             throw $e;
         }
+    }
+
+    /**
+     * Export a travel order as PDF for ICT Admin (any travel order).
+     */
+    public function exportPdfForAdmin(Request $request, TravelOrder $travelOrder)
+    {
+        if ($resp = $this->ensureIctAdmin($request)) {
+            return $resp;
+        }
+
+        // Create a new request with personnel user to reuse exportPdf method
+        $personnel = $travelOrder->personnel;
+        if (!$personnel) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Travel order personnel not found.',
+            ], 404);
+        }
+
+        // Create a new request instance with personnel user
+        $newRequest = Request::create($request->url(), 'GET', $request->query());
+        $newRequest->setUserResolver(function () use ($personnel) {
+            return $personnel;
+        });
+
+        // Use the existing exportPdf method
+        return $this->exportPdf($newRequest, $travelOrder);
+    }
+
+    /**
+     * Export a travel order as Excel for ICT Admin (any travel order).
+     */
+    public function exportExcelForAdmin(Request $request, TravelOrder $travelOrder)
+    {
+        if ($resp = $this->ensureIctAdmin($request)) {
+            return $resp;
+        }
+
+        // Create a new request with personnel user to reuse exportExcel method
+        $personnel = $travelOrder->personnel;
+        if (!$personnel) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Travel order personnel not found.',
+            ], 404);
+        }
+
+        // Create a new request instance with personnel user
+        $newRequest = Request::create($request->url(), 'GET', $request->query());
+        $newRequest->setUserResolver(function () use ($personnel) {
+            return $personnel;
+        });
+
+        // Use the existing exportExcel method
+        return $this->exportExcel($newRequest, $travelOrder);
     }
 
     /**
@@ -1305,6 +1459,29 @@ class TravelOrderController extends Controller
         $travelOrder = $attachment->travelOrder;
         if (!$travelOrder || (int) $travelOrder->personnel_id !== (int) $personnel->id) {
             return response()->json(['success' => false, 'message' => 'Not found.'], 404);
+        }
+
+        /** @var FilesystemAdapter $disk */
+        $disk = Storage::disk('public');
+
+        if (!$disk->exists($attachment->file_path)) {
+            return response()->json(['success' => false, 'message' => 'File not found.'], 404);
+        }
+
+        return $disk->download(
+            $attachment->file_path,
+            $attachment->file_name,
+            ['Content-Type' => $disk->mimeType($attachment->file_path)]
+        );
+    }
+
+    /**
+     * Download attachment for ICT Admin (any attachment).
+     */
+    public function downloadAttachmentForAdmin(Request $request, TravelOrderAttachment $attachment): StreamedResponse|\Illuminate\Http\JsonResponse
+    {
+        if ($resp = $this->ensureIctAdmin($request)) {
+            return $resp;
         }
 
         /** @var FilesystemAdapter $disk */

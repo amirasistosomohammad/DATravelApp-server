@@ -9,6 +9,7 @@ use App\Http\Controllers\TravelOrderController;
 use App\Http\Controllers\DirectorTravelOrderController;
 use App\Http\Controllers\DirectorProfileController;
 use App\Http\Controllers\PersonnelProfileController;
+use App\Http\Controllers\ReportsController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -53,6 +54,17 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/ict-admin/change-password', [IctAdminSettingsController::class, 'changePassword']);
     Route::get('/ict-admin/branding', [IctAdminSettingsController::class, 'getBranding']);
     Route::post('/ict-admin/branding', [IctAdminSettingsController::class, 'updateBranding']);
+
+    // ICT Admin - Reports & Analytics
+    Route::get('/ict-admin/reports/analytics', [ReportsController::class, 'analytics']);
+
+    // ICT Admin - Travel orders (view all)
+    Route::get('/ict-admin/travel-orders', [TravelOrderController::class, 'indexForAdmin']);
+    Route::get('/ict-admin/travel-orders/{travelOrder}', [TravelOrderController::class, 'showForAdmin']);
+    Route::get('/ict-admin/travel-orders/{travelOrder}/export/pdf', [TravelOrderController::class, 'exportPdfForAdmin']);
+    Route::get('/ict-admin/travel-orders/{travelOrder}/export/excel', [TravelOrderController::class, 'exportExcelForAdmin']);
+    Route::get('/ict-admin/travel-order-attachments/{attachment}/download', [TravelOrderController::class, 'downloadAttachmentForAdmin'])
+        ->where('attachment', '[0-9]+');
 
     // Personnel - Profile (view own details)
     Route::get('/personnel/profile', [PersonnelProfileController::class, 'show']);
