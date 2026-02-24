@@ -1170,10 +1170,29 @@ class TravelOrderController extends Controller
 
         $startDate = $this->formatDateForExcel($travelOrder->start_date);
         $endDate = $this->formatDateForExcel($travelOrder->end_date);
+        $submittedDate = $travelOrder->submitted_at
+            ? $this->formatDateForExcel($travelOrder->submitted_at)
+            : '';
 
         // =========
         // TRAVEL ORDER (upper section) — use name/position from form (person the TO is for)
         // =========
+        // Header "Date:" field (under the "No:" label) — use submitted_at so it reflects
+        // when the TO was sent to directors.
+        if ($submittedDate !== '') {
+            $headerDatePos = $this->findCellByLabelsExact($sheet, ['Date:']);
+            if ($headerDatePos) {
+                $headerDateCoord = $this->getFirstCellAfterMergedRangeOnRow($sheet, $headerDatePos->coord);
+                if (!$headerDateCoord) {
+                    $headerDateCoord = Coordinate::stringFromColumnIndex($headerDatePos->colIndex + 1) . $headerDatePos->row;
+                }
+                $sheet->setCellValue($headerDateCoord, $submittedDate);
+                $sheet->getStyle($headerDateCoord)->getAlignment()
+                    ->setHorizontal('left')
+                    ->setVertical('center');
+            }
+        }
+
         $this->writeValueOnLine($sheet, ['Name:'], $toName);
         $this->writeValueOnLine($sheet, ['Position/ Designation:'], $toPosition);
         $this->writeValueOnLine($sheet, ['Departure Date:'], $startDate);
