@@ -23,6 +23,7 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Worksheet\Drawing;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Font;
+use PhpOffice\PhpSpreadsheet\RichText\RichText;
 
 class TravelOrderController extends Controller
 {
@@ -1333,11 +1334,52 @@ class TravelOrderController extends Controller
         $cttAnchor = $this->findCellByLabelsExact($sheet, ['CERTIFICATION TO TRAVEL']);
         if ($cttAnchor) {
             $startRow = $cttAnchor->row;
-            $this->writeValueOnLine($sheet, ['Name:'], $personnelFullName, $startRow);
-            $this->writeValueOnLine($sheet, ['Position/ Designation:'], (string) ($travelOrder->personnel?->position ?? ''), $startRow);
+            // Use the "person the TO is for" values in Certification section, too.
+            $this->writeValueOnLine($sheet, ['Name:'], $toName, $startRow);
+            $this->writeValueOnLine($sheet, ['Position/ Designation:'], $toPosition, $startRow);
             $this->writeValueOnLine($sheet, ['Official Station:'], (string) ($travelOrder->official_station ?? ''), $startRow);
             $this->writeValueOnLine($sheet, ['Departure Date:'], $startDate, $startRow);
             $this->writeValueOnLine($sheet, ['Return Date:'], $endDate, $startRow);
+            // Replace the whole "This is to certify that ___ ... in ___ as ___ ... from ___ for the following purpose:"
+            // line with a fully interpolated sentence, so all blanks are filled consistently.
+            $cttEndRow = $startRow + 40;
+            $department = (string) ($travelOrder->personnel?->department ?? '');
+            $dateRange = trim($startDate . ($endDate ? " to {$endDate}" : ''));
+
+            $cttSentenceCell = $this->findCellContainingText($sheet, 'This is to certify that', $startRow, $cttEndRow);
+            if ($cttSentenceCell) {
+                // Base font from template so rich text matches existing style (only weight changes).
+                $baseFont = $sheet->getStyle($cttSentenceCell->coord)->getFont();
+
+                $rt = new RichText();
+
+                $appendRun = function (string $text, bool $bold) use ($rt, $baseFont) {
+                    $run = $rt->createTextRun($text);
+                    $font = $run->getFont();
+                    if ($font) {
+                        $font->setName($baseFont->getName());
+                        $font->setSize($baseFont->getSize());
+                        $font->setBold($bold);
+                        $font->getColor()->setARGB($baseFont->getColor()->getARGB());
+                    }
+                };
+
+                $appendRun('This is to certify that ', false);
+                $appendRun($toName, true);
+                $appendRun(' personnel hired under Contract of Service (COS) assigned in ', false);
+                $appendRun($department, true);
+                $appendRun(' as ', false);
+                $appendRun($toPosition, true);
+                $appendRun(' is allowed to go on an official local travel from ', false);
+                $appendRun($dateRange, true);
+                $appendRun(' for the following purpose:', false);
+
+                $sheet->setCellValue($cttSentenceCell->coord, $rt);
+                $sheet->getStyle($cttSentenceCell->coord)->getAlignment()
+                    ->setWrapText(true)
+                    ->setHorizontal('left')
+                    ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_TOP);
+            }
             // Write destination and remove underline (both font underline and bottom border) in Certification section
             $cttDestinationPos = $this->findCellByLabelsExact($sheet, ['Destination:'], $startRow);
             if ($cttDestinationPos) {
@@ -1754,6 +1796,71 @@ class TravelOrderController extends Controller
     {
         $s = preg_replace('/\s+/u', ' ', $s) ?? $s; // collapse spaces/newlines
         return mb_strtolower(trim($s));
+    }
+
+    /**
+     * Find the first cell whose normalized text CONTAINS $needle (normalized), optionally within a row range.
+     */
+    private function findCellContainingText($sheet, string $needle, ?int $startRow = null, ?int $endRow = null): ?object
+    {
+        $needleNorm = $this->normCellText($needle);
+        if ($needleNorm === '') return null;
+
+        $rows = $sheet->toArray(null, true, true, true);
+        foreach ($rows as $rowNum => $row) {
+            $rowNum = (int) $rowNum;
+            if ($startRow !== null && $rowNum < $startRow) continue;
+            if ($endRow !== null && $rowNum > $endRow) break;
+
+            foreach ($row as $colLetter => $cellValue) {
+                $hay = $this->normCellText((string) $cellValue);
+                if ($hay === '') continue;
+                if (mb_strpos($hay, $needleNorm) !== false) {
+                    $colIndex = Coordinate::columnIndexFromString((string) $colLetter);
+                    $coord = (string) $colLetter . $rowNum;
+                    return (object) [
+                        'row' => $rowNum,
+                        'colIndex' => $colIndex,
+                        'coord' => $coord,
+                    ];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Write $value into the first cell after a label within a row range.
+     * Tries exact-label match first (case-insensitive), then "contains" match for any fallback phrases.
+     */
+    private function writeValueAfterLabelOrContainsInRange(
+        $sheet,
+        array $exactLabels,
+        array $containsPhrases,
+        string $value,
+        int $startRow,
+        int $endRow
+    ): void {
+        $pos = $this->findCellByLabelsExact($sheet, $exactLabels, $startRow);
+        if (!$pos || $pos->row > $endRow) {
+            $pos = null;
+            foreach ($containsPhrases as $phrase) {
+                $try = $this->findCellContainingText($sheet, (string) $phrase, $startRow, $endRow);
+                if ($try) {
+                    $pos = $try;
+                    break;
+                }
+            }
+        }
+        if (!$pos) return;
+
+        $targetCoord = $this->getFirstCellAfterMergedRangeOnRow($sheet, $pos->coord);
+        if (!$targetCoord) {
+            $targetCoord = Coordinate::stringFromColumnIndex($pos->colIndex + 1) . $pos->row;
+        }
+        $sheet->setCellValue($targetCoord, $value);
+        $sheet->getStyle($targetCoord)->getAlignment()->setHorizontal('left')->setVertical('center');
     }
 
     /**
