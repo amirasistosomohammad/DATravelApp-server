@@ -32,6 +32,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::post('/logout-all', [AuthController::class, 'logoutAll']);
 
+    // Departments list (for filter dropdowns; any authenticated user)
+    Route::get('/departments', [TravelOrderController::class, 'listDepartments']);
+
     // ICT Admin - Personnel management
     Route::get('/ict-admin/personnel', [PersonnelManagementController::class, 'index']);
     Route::post('/ict-admin/personnel', [PersonnelManagementController::class, 'store']);
@@ -74,6 +77,11 @@ Route::middleware('auth:sanctum')->group(function () {
     // History and calendar MUST be defined before any {travelOrder} bindings
     Route::get('/personnel/travel-orders/history', [TravelOrderController::class, 'history']);
     Route::get('/personnel/travel-orders/calendar', [TravelOrderController::class, 'calendar']);
+    // All personnel TOs (coworkers view) - must be before {travelOrder}
+    Route::get('/personnel/travel-orders/all/attachments/{attachment}/download', [TravelOrderController::class, 'downloadAttachmentForPersonnelPeer'])
+        ->where('attachment', '[0-9]+');
+    Route::get('/personnel/travel-orders/all', [TravelOrderController::class, 'indexAllPersonnel']);
+    Route::get('/personnel/travel-orders/all/{travelOrder}', [TravelOrderController::class, 'showAllPersonnel']);
     Route::post('/personnel/travel-orders', [TravelOrderController::class, 'store']);
     Route::get('/personnel/travel-orders/{travelOrder}', [TravelOrderController::class, 'show']);
     Route::get('/personnel/travel-orders/{travelOrder}/export/pdf', [TravelOrderController::class, 'exportPdf']);
@@ -81,6 +89,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/personnel/travel-orders/{travelOrder}', [TravelOrderController::class, 'update']);
     Route::delete('/personnel/travel-orders/{travelOrder}', [TravelOrderController::class, 'destroy']);
     Route::post('/personnel/travel-orders/{travelOrder}/submit', [TravelOrderController::class, 'submit']);
+    Route::post('/personnel/travel-orders/{travelOrder}/cancel', [TravelOrderController::class, 'cancel']);
+    // Travel order editors (invite / remove) - must be before generic {travelOrder}
+    Route::get('/personnel/travel-orders/{travelOrder}/editors/list-personnel', [TravelOrderController::class, 'listPersonnelForInvite']);
+    Route::get('/personnel/travel-orders/{travelOrder}/editors', [TravelOrderController::class, 'indexEditors']);
+    Route::post('/personnel/travel-orders/{travelOrder}/editors', [TravelOrderController::class, 'storeEditor']);
+    Route::delete('/personnel/travel-orders/{travelOrder}/editors/{editorPersonnel}', [TravelOrderController::class, 'destroyEditor']);
     Route::get('/personnel/directors', [TravelOrderController::class, 'availableDirectors']);
     Route::get('/personnel/travel-order-attachments/{attachment}/download', [TravelOrderController::class, 'downloadAttachment'])
         ->where('attachment', '[0-9]+');

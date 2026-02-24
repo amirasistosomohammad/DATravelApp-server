@@ -104,7 +104,7 @@ class DirectorTravelOrderController extends Controller
     }
 
     /**
-     * Show a single travel order for review (must be pending for this director).
+     * Show a single travel order for review (must be pending for this director) or view (if director was involved).
      */
     public function show(Request $request, TravelOrder $travelOrder)
     {
@@ -115,6 +115,32 @@ class DirectorTravelOrderController extends Controller
         /** @var Director $director */
         $director = $request->user();
 
+        // Check if director has any approval record for this TO
+        $anyApproval = TravelOrderApproval::query()
+            ->where('travel_order_id', $travelOrder->id)
+            ->where('director_id', $director->id)
+            ->first();
+
+        if (!$anyApproval) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Travel order not found.',
+            ], 404);
+        }
+
+        // If TO is cancelled, allow viewing (for history) but don't set current_approval for action
+        if ($travelOrder->status === 'cancelled') {
+            $travelOrder->load(['attachments', 'personnel', 'approvals.director']);
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'travel_order' => $travelOrder,
+                    'current_approval' => null, // No action available for cancelled TOs
+                ],
+            ]);
+        }
+
+        // For non-cancelled TOs, check for pending approval
         $approval = TravelOrderApproval::query()
             ->where('travel_order_id', $travelOrder->id)
             ->where('director_id', $director->id)
@@ -185,6 +211,14 @@ class DirectorTravelOrderController extends Controller
                 'success' => false,
                 'message' => 'Travel order not found or not pending your action.',
             ], 404);
+        }
+
+        // Prevent actions on cancelled travel orders
+        if ($travelOrder->status === 'cancelled') {
+            return response()->json([
+                'success' => false,
+                'message' => 'This travel order has been cancelled and cannot be acted upon.',
+            ], 422);
         }
 
         $action = $validated['action'];
@@ -286,13 +320,26 @@ class DirectorTravelOrderController extends Controller
                 ->where('status', 'rejected')
                 ->pluck('travel_order_id');
             $query->whereIn('id', $rejectedApprovalIds);
+        } elseif ($status === 'cancelled') {
+            // Show travel orders that were cancelled (where director was involved)
+            $query->where('status', 'cancelled');
         } else {
-            // Show all: travel orders where director has acted (recommended, approved, or rejected)
+            // Show all: travel orders where director has acted (recommended, approved, rejected, or cancelled)
             $actedApprovalIds = TravelOrderApproval::query()
                 ->where('director_id', $director->id)
-                ->whereIn('status', ['recommended', 'approved', 'rejected'])
+                ->whereIn('status', ['recommended', 'approved', 'rejected', 'cancelled'])
                 ->pluck('travel_order_id');
             $query->whereIn('id', $actedApprovalIds);
+            // Also include TOs with status cancelled (even if approval status wasn't updated yet)
+            $query->orWhere('status', 'cancelled');
+        }
+
+        // Department filter (personnel who created the TO)
+        $department = $request->query('department');
+        if ($department !== null && $department !== '') {
+            $query->whereHas('personnel', function ($q) use ($department) {
+                $q->where('department', $department);
+            });
         }
 
         $perPage = (int) $request->query('per_page', 10);

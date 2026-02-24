@@ -26,8 +26,10 @@
 <body>
 @php
     $p = $travelOrder->personnel;
-    $fullName = trim(collect([$p->first_name ?? '', $p->middle_name ?? '', $p->last_name ?? ''])->filter()->implode(' '));
-    $position = $p->position ?? 'N/A';
+    $creatorFullName = trim(collect([$p->first_name ?? '', $p->middle_name ?? '', $p->last_name ?? ''])->filter()->implode(' '));
+    // Name and Position on the TO: use form values (to_name, to_position) when set; otherwise creator's
+    $fullName = ($travelOrder->to_name !== null && $travelOrder->to_name !== '') ? $travelOrder->to_name : $creatorFullName;
+    $position = ($travelOrder->to_position !== null && $travelOrder->to_position !== '') ? $travelOrder->to_position : ($p->position ?? 'N/A');
     $officialStation = $travelOrder->official_station ?: 'N/A';
     $departureDate = $travelOrder->start_date ? \Carbon\Carbon::parse($travelOrder->start_date)->format('F d, Y') : 'N/A';
     $returnDate = $travelOrder->end_date ? \Carbon\Carbon::parse($travelOrder->end_date)->format('F d, Y') : 'N/A';

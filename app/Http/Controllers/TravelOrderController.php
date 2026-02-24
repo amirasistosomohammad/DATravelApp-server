@@ -8,6 +8,7 @@ use App\Models\Personnel;
 use App\Models\TravelOrder;
 use App\Models\TravelOrderApproval;
 use App\Models\TravelOrderAttachment;
+use App\Models\TravelOrderEditor;
 use Illuminate\Http\Request;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\DB;
@@ -25,7 +26,9 @@ use PhpOffice\PhpSpreadsheet\Style\Font;
 
 class TravelOrderController extends Controller
 {
-    private const TO_EXCEL_TEMPLATE = 'templates/TRAVEL ORDER FOR CAPSTONE.xlsx';
+    // Excel template path, relative to the Laravel resources directory.
+    // The file should live at: resources/excel-templates/TRAVEL ORDER FOR CAPSTONE.xlsx
+    private const TO_EXCEL_TEMPLATE = 'excel-templates/TRAVEL ORDER FOR CAPSTONE.xlsx';
     private const TO_EXCEL_SHEET_COS = 'TO for COS';
 
     /**
@@ -75,12 +78,17 @@ class TravelOrderController extends Controller
         $personnel = $request->user();
 
         $query = TravelOrder::query()
-            ->where('personnel_id', $personnel->id)
-            ->with(['attachments', 'approvals.director'])
+            ->where(function ($q) use ($personnel) {
+                $q->where('personnel_id', $personnel->id)
+                    ->orWhereHas('editors', function ($eq) use ($personnel) {
+                        $eq->where('personnel_id', $personnel->id);
+                    });
+            })
+            ->with(['attachments', 'approvals.director', 'personnel'])
             ->orderByDesc('updated_at');
 
         $status = $request->query('status');
-        if ($status && in_array($status, ['draft', 'pending', 'approved', 'rejected'], true)) {
+        if ($status && in_array($status, ['draft', 'pending', 'approved', 'rejected', 'cancelled'], true)) {
             $query->where('status', $status);
         }
 
@@ -122,11 +130,11 @@ class TravelOrderController extends Controller
 
         // Status filter
         $status = $request->query('status');
-        if ($status && in_array($status, ['draft', 'pending', 'approved', 'rejected'], true)) {
+        if ($status && in_array($status, ['draft', 'pending', 'approved', 'rejected', 'cancelled'], true)) {
             $query->where('status', $status);
         }
 
-        // Search filter
+        // Search filter (purpose, destination, personnel name/position)
         if ($search = $request->query('search')) {
             $query->where(function ($q) use ($search) {
                 $q->where('travel_purpose', 'like', "%{$search}%")
@@ -134,7 +142,8 @@ class TravelOrderController extends Controller
                     ->orWhereHas('personnel', function ($personnelQuery) use ($search) {
                         $personnelQuery->where('first_name', 'like', "%{$search}%")
                             ->orWhere('last_name', 'like', "%{$search}%")
-                            ->orWhere('username', 'like', "%{$search}%");
+                            ->orWhere('username', 'like', "%{$search}%")
+                            ->orWhere('position', 'like', "%{$search}%");
                     });
             });
         }
@@ -145,6 +154,14 @@ class TravelOrderController extends Controller
         }
         if ($dateTo = $request->query('date_to')) {
             $query->where('end_date', '<=', $dateTo);
+        }
+
+        // Department filter (personnel who created the TO)
+        $department = $request->query('department');
+        if ($department !== null && $department !== '') {
+            $query->whereHas('personnel', function ($q) use ($department) {
+                $q->where('department', $department);
+            });
         }
 
         $perPage = (int) $request->query('per_page', 10);
@@ -188,7 +205,7 @@ class TravelOrderController extends Controller
     }
 
     /**
-     * Show a single travel order (own only).
+     * Show a single travel order (own or shared as editor).
      */
     public function show(Request $request, TravelOrder $travelOrder)
     {
@@ -199,14 +216,20 @@ class TravelOrderController extends Controller
         /** @var Personnel $personnel */
         $personnel = $request->user();
 
-        if ((int) $travelOrder->personnel_id !== (int) $personnel->id) {
+        if (! $travelOrder->canBeEditedBy($personnel)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Travel order not found.',
             ], 404);
         }
 
-        $travelOrder->load(['attachments', 'approvals.director', 'personnel']);
+        $travelOrder->load([
+            'attachments',
+            'approvals.director',
+            'personnel',
+            'editors.personnel',
+            'editors.invitedBy',
+        ]);
 
         return response()->json([
             'success' => true,
@@ -224,6 +247,8 @@ class TravelOrderController extends Controller
         }
 
         $validated = $request->validate([
+            'to_name' => ['required', 'string', 'max:255'],
+            'to_position' => ['nullable', 'string', 'max:255'],
             'travel_purpose' => ['required', 'string', 'max:500'],
             'destination' => ['required', 'string', 'max:255'],
             'official_station' => ['nullable', 'string', 'max:255'],
@@ -246,6 +271,9 @@ class TravelOrderController extends Controller
 
         $validated['personnel_id'] = $personnel->id;
         $validated['status'] = 'draft';
+        if (empty($validated['to_position'])) {
+            $validated['to_position'] = $personnel->position ?? '';
+        }
 
         $travelOrder = TravelOrder::create($validated);
 
@@ -261,7 +289,7 @@ class TravelOrderController extends Controller
     }
 
     /**
-     * Update a travel order (draft only).
+     * Update a travel order (draft only). Allowed for creator or invited editors.
      */
     public function update(Request $request, TravelOrder $travelOrder)
     {
@@ -272,7 +300,7 @@ class TravelOrderController extends Controller
         /** @var Personnel $personnel */
         $personnel = $request->user();
 
-        if ((int) $travelOrder->personnel_id !== (int) $personnel->id) {
+        if (! $travelOrder->canBeEditedBy($personnel)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Travel order not found.',
@@ -287,6 +315,8 @@ class TravelOrderController extends Controller
         }
 
         $validated = $request->validate([
+            'to_name' => ['sometimes', 'string', 'max:255'],
+            'to_position' => ['nullable', 'string', 'max:255'],
             'travel_purpose' => ['sometimes', 'string', 'max:500'],
             'destination' => ['sometimes', 'string', 'max:255'],
             'official_station' => ['nullable', 'string', 'max:255'],
@@ -358,7 +388,7 @@ class TravelOrderController extends Controller
 
     /**
      * History: non-draft travel orders for the authenticated personnel.
-     * Optional query "status": pending | approved | rejected | all
+     * Optional query "status": pending | approved | rejected | cancelled | all
      */
     public function history(Request $request)
     {
@@ -370,13 +400,18 @@ class TravelOrderController extends Controller
         $personnel = $request->user();
 
         $query = TravelOrder::query()
-            ->where('personnel_id', $personnel->id)
-            ->whereIn('status', ['pending', 'approved', 'rejected'])
-            ->with(['attachments', 'approvals.director'])
+            ->where(function ($q) use ($personnel) {
+                $q->where('personnel_id', $personnel->id)
+                    ->orWhereHas('editors', function ($eq) use ($personnel) {
+                        $eq->where('personnel_id', $personnel->id);
+                    });
+            })
+            ->whereIn('status', ['pending', 'approved', 'rejected', 'cancelled'])
+            ->with(['attachments', 'approvals.director', 'personnel'])
             ->orderByDesc('updated_at');
 
-        $status = $request->query('status'); // pending | approved | rejected | all
-        if ($status && in_array($status, ['pending', 'approved', 'rejected'], true)) {
+        $status = $request->query('status'); // pending | approved | rejected | cancelled | all
+        if ($status && in_array($status, ['pending', 'approved', 'rejected', 'cancelled'], true)) {
             $query->where('status', $status);
         }
 
@@ -404,6 +439,155 @@ class TravelOrderController extends Controller
     }
 
     /**
+     * List distinct departments from personnel (for filter dropdowns).
+     * Available to any authenticated user (personnel, director, ict_admin).
+     */
+    public function listDepartments(Request $request)
+    {
+        $departments = Personnel::query()
+            ->whereNotNull('department')
+            ->where('department', '!=', '')
+            ->distinct()
+            ->orderBy('department')
+            ->pluck('department')
+            ->values()
+            ->all();
+
+        return response()->json([
+            'success' => true,
+            'data' => ['departments' => $departments],
+        ]);
+    }
+
+    /**
+     * List all personnel travel orders (for personnel to view coworkers' TOs).
+     * Read-only; supports department filter and search by name/position.
+     */
+    public function indexAllPersonnel(Request $request)
+    {
+        if ($resp = $this->ensurePersonnel($request)) {
+            return $resp;
+        }
+
+        $query = TravelOrder::query()
+            ->with(['attachments', 'approvals.director', 'personnel'])
+            ->orderByDesc('updated_at');
+
+        // Exclude draft (personnel see only submitted TOs of others)
+        $query->whereIn('status', ['pending', 'approved', 'rejected', 'cancelled']);
+
+        // Department filter
+        $department = $request->query('department');
+        if ($department !== null && $department !== '') {
+            $query->whereHas('personnel', function ($q) use ($department) {
+                $q->where('department', $department);
+            });
+        }
+
+        // Search by purpose, destination, or personnel name/position
+        if ($search = $request->query('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('travel_purpose', 'like', "%{$search}%")
+                    ->orWhere('destination', 'like', "%{$search}%")
+                    ->orWhereHas('personnel', function ($personnelQuery) use ($search) {
+                        $personnelQuery->where('first_name', 'like', "%{$search}%")
+                            ->orWhere('last_name', 'like', "%{$search}%")
+                            ->orWhere('username', 'like', "%{$search}%")
+                            ->orWhere('position', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        // Status filter
+        $status = $request->query('status');
+        if ($status && in_array($status, ['pending', 'approved', 'rejected', 'cancelled'], true)) {
+            $query->where('status', $status);
+        }
+
+        // Date filters
+        if ($dateFrom = $request->query('date_from')) {
+            $query->where('start_date', '>=', $dateFrom);
+        }
+        if ($dateTo = $request->query('date_to')) {
+            $query->where('end_date', '<=', $dateTo);
+        }
+
+        $perPage = (int) $request->query('per_page', 10);
+        if ($perPage <= 0) {
+            $perPage = 10;
+        }
+
+        $paginator = $query->paginate($perPage);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'items' => $paginator->items(),
+                'pagination' => [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'total' => $paginator->total(),
+                    'from' => $paginator->firstItem() ?? 0,
+                    'to' => $paginator->lastItem() ?? 0,
+                    'per_page' => $paginator->perPage(),
+                ],
+            ],
+        ]);
+    }
+
+    /**
+     * Show a single travel order from "all personnel" list (read-only for personnel).
+     */
+    public function showAllPersonnel(Request $request, TravelOrder $travelOrder)
+    {
+        if ($resp = $this->ensurePersonnel($request)) {
+            return $resp;
+        }
+
+        // Only allow viewing non-draft TOs from the "all" list
+        if (! in_array($travelOrder->status, ['pending', 'approved', 'rejected', 'cancelled'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Travel order not found.',
+            ], 404);
+        }
+
+        $travelOrder->load(['attachments', 'approvals.director', 'personnel']);
+
+        return response()->json([
+            'success' => true,
+            'data' => $travelOrder,
+        ]);
+    }
+
+    /**
+     * Download attachment when personnel is viewing a peer's TO (from "all" list).
+     */
+    public function downloadAttachmentForPersonnelPeer(Request $request, TravelOrderAttachment $attachment): StreamedResponse|\Illuminate\Http\JsonResponse
+    {
+        if ($resp = $this->ensurePersonnel($request)) {
+            return $resp;
+        }
+
+        $travelOrder = $attachment->travelOrder;
+        if (! $travelOrder || ! in_array($travelOrder->status, ['pending', 'approved', 'rejected', 'cancelled'], true)) {
+            return response()->json(['success' => false, 'message' => 'Not found.'], 404);
+        }
+
+        /** @var FilesystemAdapter $disk */
+        $disk = Storage::disk('public');
+        if (! $disk->exists($attachment->file_path)) {
+            return response()->json(['success' => false, 'message' => 'File not found.'], 404);
+        }
+
+        return $disk->download(
+            $attachment->file_path,
+            $attachment->file_name,
+            ['Content-Type' => $disk->mimeType($attachment->file_path)]
+        );
+    }
+
+    /**
      * Calendar: travel orders overlapping the given date range (for personnel calendar UI).
      * Query params: start (Y-m-d or ISO), end (Y-m-d or ISO), all (true/false) to fetch all orders.
      */
@@ -418,10 +602,17 @@ class TravelOrderController extends Controller
 
         $viewAll = $request->query('all') === 'true' || $request->query('all') === '1';
 
+        $ownOrEditorQuery = function ($q) use ($personnel) {
+            $q->where('personnel_id', $personnel->id)
+                ->orWhereHas('editors', function ($eq) use ($personnel) {
+                    $eq->where('personnel_id', $personnel->id);
+                });
+        };
+
         if ($viewAll) {
             // Fetch all travel orders regardless of date range
             $items = TravelOrder::query()
-                ->where('personnel_id', $personnel->id)
+                ->where($ownOrEditorQuery)
                 ->orderBy('start_date')
                 ->get(['id', 'start_date', 'end_date', 'travel_purpose', 'destination', 'status']);
         } else {
@@ -441,7 +632,7 @@ class TravelOrderController extends Controller
             }
 
             $items = TravelOrder::query()
-                ->where('personnel_id', $personnel->id)
+                ->where($ownOrEditorQuery)
                 ->where(function ($q) use ($rangeStart, $rangeEnd) {
                     $q->where('start_date', '<=', $rangeEnd->toDateString())
                         ->where('end_date', '>=', $rangeStart->toDateString());
@@ -578,6 +769,213 @@ class TravelOrderController extends Controller
     }
 
     /**
+     * Cancel a submitted travel order (personnel).
+     * Body: cancellation_remarks (required).
+     */
+    public function cancel(Request $request, TravelOrder $travelOrder)
+    {
+        if ($resp = $this->ensurePersonnel($request)) {
+            return $resp;
+        }
+
+        /** @var Personnel $personnel */
+        $personnel = $request->user();
+
+        if (! $travelOrder->canBeEditedBy($personnel)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Travel order not found.',
+            ], 404);
+        }
+
+        if (! in_array($travelOrder->status, ['pending', 'recommended', 'approved'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only pending, recommended, or approved travel orders can be cancelled.',
+            ], 422);
+        }
+
+        $validated = $request->validate([
+            'cancellation_remarks' => ['required', 'string', 'max:1000'],
+        ]);
+
+        DB::transaction(function () use ($travelOrder, $validated) {
+            // Update all pending approvals to cancelled
+            $travelOrder->approvals()
+                ->where('status', 'pending')
+                ->update(['status' => 'cancelled']);
+
+            $travelOrder->update([
+                'status' => 'cancelled',
+                'cancellation_remarks' => $validated['cancellation_remarks'],
+                'cancelled_at' => now(),
+            ]);
+        });
+
+        $travelOrder->load(['attachments', 'approvals.director', 'personnel']);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Travel order cancelled successfully.',
+            'data' => $travelOrder,
+        ]);
+    }
+
+    /**
+     * List editors for a travel order (creator only).
+     */
+    public function indexEditors(Request $request, TravelOrder $travelOrder)
+    {
+        if ($resp = $this->ensurePersonnel($request)) {
+            return $resp;
+        }
+
+        /** @var Personnel $personnel */
+        $personnel = $request->user();
+
+        if ((int) $travelOrder->personnel_id !== (int) $personnel->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Travel order not found.',
+            ], 404);
+        }
+
+        $editors = $travelOrder->editors()
+            ->with(['personnel:id,first_name,last_name,middle_name,username,position,department', 'invitedBy:id,first_name,last_name,middle_name'])
+            ->orderBy('created_at')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => ['editors' => $editors],
+        ]);
+    }
+
+    /**
+     * Invite a personnel user as editor to this travel order (creator only).
+     * Body: personnel_id (required).
+     */
+    public function storeEditor(Request $request, TravelOrder $travelOrder)
+    {
+        if ($resp = $this->ensurePersonnel($request)) {
+            return $resp;
+        }
+
+        /** @var Personnel $personnel */
+        $personnel = $request->user();
+
+        if ((int) $travelOrder->personnel_id !== (int) $personnel->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Travel order not found.',
+            ], 404);
+        }
+
+        $validated = $request->validate([
+            'personnel_id' => ['required', 'integer', 'exists:personnel,id'],
+        ]);
+        $editorPersonnelId = (int) $validated['personnel_id'];
+
+        if ($editorPersonnelId === (int) $personnel->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You cannot invite yourself as an editor.',
+            ], 422);
+        }
+
+        if ($travelOrder->editors()->where('personnel_id', $editorPersonnelId)->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This user is already an editor.',
+            ], 422);
+        }
+
+        $editor = TravelOrderEditor::create([
+            'travel_order_id' => $travelOrder->id,
+            'personnel_id' => $editorPersonnelId,
+            'invited_by' => $personnel->id,
+        ]);
+
+        $editor->load(['personnel:id,first_name,last_name,middle_name,username,position,department', 'invitedBy:id,first_name,last_name,middle_name']);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Editor invited successfully.',
+            'data' => $editor,
+        ], 201);
+    }
+
+    /**
+     * Remove an editor from a travel order (creator only).
+     */
+    public function destroyEditor(Request $request, TravelOrder $travelOrder, Personnel $editorPersonnel)
+    {
+        if ($resp = $this->ensurePersonnel($request)) {
+            return $resp;
+        }
+
+        /** @var Personnel $personnel */
+        $personnel = $request->user();
+
+        if ((int) $travelOrder->personnel_id !== (int) $personnel->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Travel order not found.',
+            ], 404);
+        }
+
+        $deleted = $travelOrder->editors()->where('personnel_id', $editorPersonnel->id)->delete();
+
+        if (! $deleted) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Editor not found.',
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Editor removed successfully.',
+        ]);
+    }
+
+    /**
+     * List personnel that can be invited as editors (active, not self, not already editor).
+     * For use in invite-editor dropdown/search.
+     */
+    public function listPersonnelForInvite(Request $request, TravelOrder $travelOrder)
+    {
+        if ($resp = $this->ensurePersonnel($request)) {
+            return $resp;
+        }
+
+        /** @var Personnel $personnel */
+        $personnel = $request->user();
+
+        if ((int) $travelOrder->personnel_id !== (int) $personnel->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Travel order not found.',
+            ], 404);
+        }
+
+        $existingEditorIds = $travelOrder->editors()->pluck('personnel_id')->all();
+        $existingEditorIds[] = $personnel->id;
+
+        $personnelList = Personnel::query()
+            ->where('is_active', true)
+            ->whereNotIn('id', $existingEditorIds)
+            ->orderBy('first_name')
+            ->orderBy('last_name')
+            ->get(['id', 'first_name', 'last_name', 'middle_name', 'username', 'position', 'department']);
+
+        return response()->json([
+            'success' => true,
+            'data' => ['personnel' => $personnelList],
+        ]);
+    }
+
+    /**
      * List active directors for personnel (e.g. for submit dropdown).
      */
     public function availableDirectors(Request $request)
@@ -610,7 +1008,7 @@ class TravelOrderController extends Controller
         /** @var Personnel $personnel */
         $personnel = $request->user();
 
-        if ((int) $travelOrder->personnel_id !== (int) $personnel->id) {
+        if (! $travelOrder->canBeEditedBy($personnel)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Travel order not found.',
@@ -733,7 +1131,7 @@ class TravelOrderController extends Controller
         /** @var Personnel $personnel */
         $personnel = $request->user();
 
-        if ((int) $travelOrder->personnel_id !== (int) $personnel->id) {
+        if (! $travelOrder->canBeEditedBy($personnel)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Travel order not found.',
@@ -742,7 +1140,8 @@ class TravelOrderController extends Controller
 
         $travelOrder->load(['personnel', 'approvals.director']);
 
-        $templateAbsolutePath = storage_path('app/' . self::TO_EXCEL_TEMPLATE);
+        // Load Excel template from version-controlled resources directory
+        $templateAbsolutePath = resource_path(self::TO_EXCEL_TEMPLATE);
         if (!is_file($templateAbsolutePath)) {
             return response()->json([
                 'success' => false,
@@ -760,14 +1159,22 @@ class TravelOrderController extends Controller
             $travelOrder->personnel?->last_name,
         ])->filter()->implode(' '));
 
+        // Name and Position on the TO: use form values (to_name, to_position) when set; otherwise creator's
+        $toName = $travelOrder->to_name !== null && $travelOrder->to_name !== ''
+            ? $travelOrder->to_name
+            : $personnelFullName;
+        $toPosition = $travelOrder->to_position !== null && $travelOrder->to_position !== ''
+            ? $travelOrder->to_position
+            : (string) ($travelOrder->personnel?->position ?? '');
+
         $startDate = $this->formatDateForExcel($travelOrder->start_date);
         $endDate = $this->formatDateForExcel($travelOrder->end_date);
 
         // =========
-        // TRAVEL ORDER (upper section)
+        // TRAVEL ORDER (upper section) — use name/position from form (person the TO is for)
         // =========
-        $this->writeValueOnLine($sheet, ['Name:'], $personnelFullName);
-        $this->writeValueOnLine($sheet, ['Position/ Designation:'], (string) ($travelOrder->personnel?->position ?? ''));
+        $this->writeValueOnLine($sheet, ['Name:'], $toName);
+        $this->writeValueOnLine($sheet, ['Position/ Designation:'], $toPosition);
         $this->writeValueOnLine($sheet, ['Departure Date:'], $startDate);
         // Write destination and remove underline (both font underline and bottom border)
         $destinationPos = $this->findCellByLabelsExact($sheet, ['Destination:']);
@@ -1457,7 +1864,7 @@ class TravelOrderController extends Controller
         $personnel = $request->user();
 
         $travelOrder = $attachment->travelOrder;
-        if (!$travelOrder || (int) $travelOrder->personnel_id !== (int) $personnel->id) {
+        if (! $travelOrder || ! $travelOrder->canBeEditedBy($personnel)) {
             return response()->json(['success' => false, 'message' => 'Not found.'], 404);
         }
 
