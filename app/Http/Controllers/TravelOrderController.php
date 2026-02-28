@@ -85,7 +85,7 @@ class TravelOrderController extends Controller
                         $eq->where('personnel_id', $personnel->id);
                     });
             })
-            ->with(['attachments', 'approvals.director', 'personnel'])
+            ->with(['attachments', 'approvals.director', 'personnel', 'editors'])
             ->orderByDesc('updated_at');
 
         $status = $request->query('status');
@@ -206,22 +206,13 @@ class TravelOrderController extends Controller
     }
 
     /**
-     * Show a single travel order (own or shared as editor).
+     * Show a single travel order. Any personnel can view any TO (e.g. from DA-wide calendar);
+     * edit/update/delete remain restricted to owner or invited editors.
      */
     public function show(Request $request, TravelOrder $travelOrder)
     {
         if ($resp = $this->ensurePersonnel($request)) {
             return $resp;
-        }
-
-        /** @var Personnel $personnel */
-        $personnel = $request->user();
-
-        if (! $travelOrder->canBeEditedBy($personnel)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Travel order not found.',
-            ], 404);
         }
 
         $travelOrder->load([
@@ -308,10 +299,11 @@ class TravelOrderController extends Controller
             ], 404);
         }
 
-        if ($travelOrder->status !== 'draft') {
+        $allowedStatuses = ['draft', 'pending', 'approved', 'rejected', 'cancelled'];
+        if (! in_array($travelOrder->status, $allowedStatuses, true)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only draft travel orders can be updated.',
+                'message' => 'Only draft, pending, approved, rejected, or cancelled travel orders can be updated.',
             ], 422);
         }
 
@@ -590,7 +582,8 @@ class TravelOrderController extends Controller
 
     /**
      * Calendar: travel orders overlapping the given date range (for personnel calendar UI).
-     * Query params: start (Y-m-d or ISO), end (Y-m-d or ISO), all (true/false) to fetch all orders.
+     * Shows all TOs across all departments (DA-wide calendar) so personnel are informed of all travel.
+     * Query params: start (Y-m-d or ISO), end (Y-m-d or ISO), all (true/false) to fetch all orders in range.
      */
     public function calendar(Request $request)
     {
@@ -598,24 +591,13 @@ class TravelOrderController extends Controller
             return $resp;
         }
 
-        /** @var Personnel $personnel */
-        $personnel = $request->user();
-
         $viewAll = $request->query('all') === 'true' || $request->query('all') === '1';
 
-        $ownOrEditorQuery = function ($q) use ($personnel) {
-            $q->where('personnel_id', $personnel->id)
-                ->orWhereHas('editors', function ($eq) use ($personnel) {
-                    $eq->where('personnel_id', $personnel->id);
-                });
-        };
-
         if ($viewAll) {
-            // Fetch all travel orders regardless of date range
             $items = TravelOrder::query()
-                ->where($ownOrEditorQuery)
+                ->with(['personnel:id,first_name,middle_name,last_name,position,department'])
                 ->orderBy('start_date')
-                ->get(['id', 'start_date', 'end_date', 'travel_purpose', 'destination', 'status']);
+                ->get(['id', 'personnel_id', 'to_name', 'to_position', 'start_date', 'end_date', 'travel_purpose', 'destination', 'status']);
         } else {
             $startInput = $request->query('start');
             $endInput = $request->query('end');
@@ -633,13 +615,13 @@ class TravelOrderController extends Controller
             }
 
             $items = TravelOrder::query()
-                ->where($ownOrEditorQuery)
+                ->with(['personnel:id,first_name,middle_name,last_name,position,department'])
                 ->where(function ($q) use ($rangeStart, $rangeEnd) {
                     $q->where('start_date', '<=', $rangeEnd->toDateString())
                         ->where('end_date', '>=', $rangeStart->toDateString());
                 })
                 ->orderBy('start_date')
-                ->get(['id', 'start_date', 'end_date', 'travel_purpose', 'destination', 'status']);
+                ->get(['id', 'personnel_id', 'to_name', 'to_position', 'start_date', 'end_date', 'travel_purpose', 'destination', 'status']);
         }
 
         return response()->json([
@@ -702,7 +684,7 @@ class TravelOrderController extends Controller
         /** @var Personnel $personnel */
         $personnel = $request->user();
 
-        if ((int) $travelOrder->personnel_id !== (int) $personnel->id) {
+        if (! $travelOrder->canBeEditedBy($personnel)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Travel order not found.',
